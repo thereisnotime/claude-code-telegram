@@ -49,6 +49,9 @@ clean:
 run:
 	poetry run claude-telegram-bot
 
+run-watch:  ## Run the bot with auto-restart on src/ changes (uses watchfiles)
+	poetry run watchfiles "python -m src.main" src/
+
 # For debugging
 run-debug:
 	poetry run claude-telegram-bot --debug

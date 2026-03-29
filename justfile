@@ -150,6 +150,17 @@ setup-whisper-build gpu='none':
     # Strip "gpu=" prefix if someone passes gpu=none instead of just none
     gpu_opt="{{ gpu }}"
     gpu_opt="${gpu_opt#gpu=}"
+    # Check build dependencies
+    for cmd in cmake make gcc; do
+        if ! command -v "$cmd" &>/dev/null; then
+            echo "Missing build dependency: $cmd"
+            echo "Install build tools:"
+            echo "  Ubuntu/Debian: sudo apt install -y build-essential cmake"
+            echo "  macOS:         brew install cmake"
+            echo "  Alpine:        apk add build-base cmake"
+            exit 1
+        fi
+    done
     build_dir="$(mktemp -d)"
     echo "Cloning whisper.cpp into $build_dir ..."
     git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git "$build_dir/whisper.cpp"

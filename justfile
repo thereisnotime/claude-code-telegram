@@ -20,8 +20,12 @@ run-env +files:
     poetry run claude-telegram-bot {{ prepend('--env-file ', files) }}
 
 # Run the bot with auto-restart on src/ changes
-run-watch:
-    poetry run watchfiles "claude-telegram-bot" src/
+run-watch *args='':
+    poetry run watchfiles "claude-telegram-bot {{ args }}" src/
+
+# Run the bot with auto-restart and additional .env files (e.g. just run-watch-env .env.local .env.secrets)
+run-watch-env +files:
+    poetry run watchfiles "claude-telegram-bot {{ prepend('--env-file ', files) }}" src/
 
 # Run the bot with debug logging
 run-debug:

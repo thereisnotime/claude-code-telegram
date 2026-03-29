@@ -123,6 +123,80 @@ release:
     git push && git push origin "v${current_version}"
     echo "Pushed v${current_version}. Release workflow will run on GitHub."
 
+# Download a whisper.cpp GGML model (e.g. just setup-whisper-model small)
+setup-whisper-model model='base':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    model_dir="$HOME/.cache/whisper-cpp"
+    model_file="${model_dir}/ggml-{{ model }}.bin"
+    url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{{ model }}.bin"
+    mkdir -p "$model_dir"
+    if [ -f "$model_file" ]; then
+        echo "Model already exists: $model_file"
+        echo "Delete it first if you want to re-download."
+        exit 0
+    fi
+    echo "Downloading ggml-{{ model }}.bin ..."
+    curl -L -o "$model_file" "$url"
+    echo "Saved to $model_file"
+
+# Build and install whisper.cpp from source
+setup-whisper-build gpu='none':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    build_dir="$(mktemp -d)"
+    echo "Cloning whisper.cpp into $build_dir ..."
+    git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git "$build_dir/whisper.cpp"
+    cd "$build_dir/whisper.cpp"
+    cmake_flags=""
+    case "{{ gpu }}" in
+        cuda)  cmake_flags="-DWHISPER_CUBLAS=ON" ;;
+        metal) cmake_flags="-DWHISPER_METAL=ON" ;;
+        none)  ;;
+        *)     echo "Unknown gpu option '{{ gpu }}'. Use: none, cuda, metal"; exit 1 ;;
+    esac
+    echo "Building with cmake ${cmake_flags:-"(CPU only)"} ..."
+    cmake -B build $cmake_flags
+    cmake --build build --config Release
+    binary="build/bin/whisper-cli"
+    if [ ! -f "$binary" ]; then
+        binary="build/bin/main"
+    fi
+    echo ""
+    echo "Build complete: $build_dir/whisper.cpp/$binary"
+    echo ""
+    echo "To install system-wide:"
+    echo "  sudo cp $build_dir/whisper.cpp/$binary /usr/local/bin/whisper-cpp"
+    echo ""
+    echo "Or set in .env:"
+    echo "  WHISPER_CPP_BINARY_PATH=$build_dir/whisper.cpp/$binary"
+
+# Full local whisper.cpp setup: install ffmpeg, build binary, download model
+setup-whisper model='base' gpu='none':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== Step 1: Check ffmpeg ==="
+    if command -v ffmpeg &>/dev/null; then
+        echo "ffmpeg is already installed: $(which ffmpeg)"
+    else
+        echo "ffmpeg not found. Install it:"
+        echo "  Ubuntu/Debian: sudo apt install -y ffmpeg"
+        echo "  macOS:         brew install ffmpeg"
+        echo "  Alpine:        apk add ffmpeg"
+        exit 1
+    fi
+    echo ""
+    echo "=== Step 2: Build whisper.cpp ==="
+    just setup-whisper-build {{ gpu }}
+    echo ""
+    echo "=== Step 3: Download model ==="
+    just setup-whisper-model {{ model }}
+    echo ""
+    echo "=== Done ==="
+    echo "Add to your .env:"
+    echo "  VOICE_PROVIDER=local"
+    echo "  WHISPER_CPP_MODEL_PATH={{ model }}"
+
 # Start bot on remote Mac in tmux (persists after SSH disconnect)
 run-remote:
     security unlock-keychain ~/Library/Keychains/login.keychain-db

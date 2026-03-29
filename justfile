@@ -127,33 +127,39 @@ release:
 setup-whisper-model model='base':
     #!/usr/bin/env bash
     set -euo pipefail
+    # Strip "model=" prefix if someone passes model=base instead of just base
+    model_name="{{ model }}"
+    model_name="${model_name#model=}"
     model_dir="$HOME/.cache/whisper-cpp"
-    model_file="${model_dir}/ggml-{{ model }}.bin"
-    url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{{ model }}.bin"
+    model_file="${model_dir}/ggml-${model_name}.bin"
+    url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model_name}.bin"
     mkdir -p "$model_dir"
     if [ -f "$model_file" ]; then
         echo "Model already exists: $model_file"
         echo "Delete it first if you want to re-download."
         exit 0
     fi
-    echo "Downloading ggml-{{ model }}.bin ..."
+    echo "Downloading ggml-${model_name}.bin ..."
     curl -L -o "$model_file" "$url"
     echo "Saved to $model_file"
 
-# Build and install whisper.cpp from source
+# Build and install whisper.cpp from source (e.g. just setup-whisper-build cuda)
 setup-whisper-build gpu='none':
     #!/usr/bin/env bash
     set -euo pipefail
+    # Strip "gpu=" prefix if someone passes gpu=none instead of just none
+    gpu_opt="{{ gpu }}"
+    gpu_opt="${gpu_opt#gpu=}"
     build_dir="$(mktemp -d)"
     echo "Cloning whisper.cpp into $build_dir ..."
     git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git "$build_dir/whisper.cpp"
     cd "$build_dir/whisper.cpp"
     cmake_flags=""
-    case "{{ gpu }}" in
+    case "$gpu_opt" in
         cuda)  cmake_flags="-DWHISPER_CUBLAS=ON" ;;
         metal) cmake_flags="-DWHISPER_METAL=ON" ;;
         none)  ;;
-        *)     echo "Unknown gpu option '{{ gpu }}'. Use: none, cuda, metal"; exit 1 ;;
+        *)     echo "Unknown gpu option '$gpu_opt'. Use: none, cuda, metal"; exit 1 ;;
     esac
     echo "Building with cmake ${cmake_flags:-"(CPU only)"} ..."
     cmake -B build $cmake_flags
@@ -171,10 +177,12 @@ setup-whisper-build gpu='none':
     echo "Or set in .env:"
     echo "  WHISPER_CPP_BINARY_PATH=$build_dir/whisper.cpp/$binary"
 
-# Full local whisper.cpp setup: install ffmpeg, build binary, download model
+# Full local whisper.cpp setup: install ffmpeg, build binary, download model (e.g. just setup-whisper small cuda)
 setup-whisper model='base' gpu='none':
     #!/usr/bin/env bash
     set -euo pipefail
+    model_name="{{ model }}"
+    model_name="${model_name#model=}"
     echo "=== Step 1: Check ffmpeg ==="
     if command -v ffmpeg &>/dev/null; then
         echo "ffmpeg is already installed: $(which ffmpeg)"
@@ -190,12 +198,12 @@ setup-whisper model='base' gpu='none':
     just setup-whisper-build {{ gpu }}
     echo ""
     echo "=== Step 3: Download model ==="
-    just setup-whisper-model {{ model }}
+    just setup-whisper-model "$model_name"
     echo ""
     echo "=== Done ==="
     echo "Add to your .env:"
     echo "  VOICE_PROVIDER=local"
-    echo "  WHISPER_CPP_MODEL_PATH={{ model }}"
+    echo "  WHISPER_CPP_MODEL_PATH=$model_name"
 
 # Start bot on remote Mac in tmux (persists after SSH disconnect)
 run-remote:

@@ -3,7 +3,6 @@
 import asyncio
 import sys
 from datetime import timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 

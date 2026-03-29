@@ -483,18 +483,25 @@ class ClaudeSDKManager:
 
             # Use ResultMessage.result if available, fall back to message extraction
             if result_content is not None:
-                content = str(result_content).strip()
+                # result_content may be a list of content blocks or a string
+                if isinstance(result_content, list):
+                    text_parts = [
+                        block.text for block in result_content if hasattr(block, "text")
+                    ]
+                    content = "\n".join(text_parts).strip()
+                else:
+                    content = str(result_content).strip()
             else:
                 content_parts = []
                 for msg in messages:
                     if isinstance(msg, AssistantMessage):
                         msg_content = getattr(msg, "content", [])
-                        if msg_content and isinstance(msg_content, list):
+                        if isinstance(msg_content, list):
                             for block in msg_content:
                                 if hasattr(block, "text"):
                                     content_parts.append(block.text)
-                        elif msg_content:
-                            content_parts.append(str(msg_content))
+                        elif isinstance(msg_content, str):
+                            content_parts.append(msg_content)
                 content = "\n".join(content_parts).strip()
 
             if not content and tools_used:
@@ -630,11 +637,11 @@ class ClaudeSDKManager:
                         tool_calls=tool_calls if tool_calls else None,
                     )
                     await stream_callback(update)
-                elif content:
-                    # Fallback for non-list content
+                elif content and isinstance(content, str):
+                    # Fallback for plain string content only
                     update = StreamUpdate(
                         type="assistant",
-                        content=str(content),
+                        content=content,
                     )
                     await stream_callback(update)
 

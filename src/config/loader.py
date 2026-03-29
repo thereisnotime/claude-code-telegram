@@ -16,13 +16,16 @@ logger = structlog.get_logger()
 
 
 def load_config(
-    env: Optional[str] = None, config_file: Optional[Path] = None
+    env: Optional[str] = None,
+    config_file: Optional[Path] = None,
+    extra_env_files: Optional[list[Path]] = None,
 ) -> Settings:
     """Load configuration based on environment.
 
     Args:
         env: Environment name (development, testing, production)
         config_file: Optional path to configuration file
+        extra_env_files: Additional .env files to load in order (later overrides earlier)
 
     Returns:
         Configured Settings instance
@@ -30,13 +33,21 @@ def load_config(
     Raises:
         ConfigurationError: If configuration is invalid
     """
-    # Load .env file explicitly
+    # Load base .env file first
     env_file = config_file or Path(".env")
     if env_file.exists():
         logger.info("Loading .env file", path=str(env_file))
         load_dotenv(env_file)
     else:
         logger.warning("No .env file found", path=str(env_file))
+
+    # Layer additional .env files on top (override=True so later values win)
+    for extra in extra_env_files or []:
+        if extra.exists():
+            logger.info("Loading additional .env file", path=str(extra))
+            load_dotenv(extra, override=True)
+        else:
+            logger.warning("Additional .env file not found", path=str(extra))
 
     # Determine environment
     env = env or os.getenv("ENVIRONMENT", "development")

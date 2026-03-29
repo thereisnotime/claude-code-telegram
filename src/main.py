@@ -89,6 +89,14 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--config-file", type=Path, help="Path to configuration file")
 
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Additional .env file(s) to load. Can be repeated. Loaded in order, later files override earlier ones.",
+    )
+
     return parser.parse_args()
 
 
@@ -378,7 +386,10 @@ async def main() -> None:
         # Load configuration
         from src.config import FeatureFlags, load_config
 
-        config = load_config(config_file=args.config_file)
+        config = load_config(
+            config_file=args.config_file,
+            extra_env_files=args.env_file,
+        )
         features = FeatureFlags(config)
 
         logger.info(

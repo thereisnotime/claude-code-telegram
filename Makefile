@@ -22,7 +22,7 @@ help:
 	@echo "  remote-stop   - Stop the bot tmux session"
 
 install:
-	poetry install --no-dev
+	poetry install --only main
 
 dev:
 	poetry install

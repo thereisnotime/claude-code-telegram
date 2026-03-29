@@ -4,7 +4,7 @@ default:
 
 # Install production dependencies
 install:
-    poetry install --no-dev
+    poetry install --only main
 
 # Install all dependencies (including dev) and set up pre-commit hooks
 dev:

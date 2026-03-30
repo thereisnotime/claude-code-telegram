@@ -691,7 +691,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         # Validate filename using security validator
         if security_validator:
-            valid, error = security_validator.validate_filename(document.file_name or "")
+            valid, error = security_validator.validate_filename(
+                document.file_name or ""
+            )
             if not valid:
                 await update.message.reply_text(
                     f"❌ <b>File Upload Rejected</b>\n\n{escape_html(error or '')}",

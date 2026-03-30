@@ -214,7 +214,11 @@ class ResponseFormatter:
         """Identify different content types in the text."""
         sections: List[Dict[str, Any]] = []
         lines = text.split("\n")
-        current_section: Dict[str, Any] = {"type": "text", "content": "", "start_line": 0}
+        current_section: Dict[str, Any] = {
+            "type": "text",
+            "content": "",
+            "start_line": 0,
+        }
         in_code_block = False
 
         for i, line in enumerate(lines):

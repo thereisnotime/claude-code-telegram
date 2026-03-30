@@ -382,7 +382,9 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     assert context.bot_data is not None
     user_id = update.effective_user.id
     settings: Settings = context.bot_data["settings"]
-    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get("claude_integration")
+    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get(
+        "claude_integration"
+    )
     audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
 
     # Parse optional prompt from command arguments
@@ -635,7 +637,9 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     assert context.bot_data is not None
     user_id = update.effective_user.id
     settings: Settings = context.bot_data["settings"]
-    security_validator: Optional[SecurityValidator] = context.bot_data.get("security_validator")
+    security_validator: Optional[SecurityValidator] = context.bot_data.get(
+        "security_validator"
+    )
     audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
 
     # Parse arguments

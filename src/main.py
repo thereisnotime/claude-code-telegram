@@ -122,7 +122,11 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     # Add token provider if enabled
     if config.enable_token_auth:
         token_storage = InMemoryTokenStorage()  # TODO: Use database storage
-        secret = config.auth_token_secret.get_secret_value() if config.auth_token_secret else ""
+        secret = (
+            config.auth_token_secret.get_secret_value()
+            if config.auth_token_secret
+            else ""
+        )
         providers.append(TokenAuthProvider(secret, token_storage))
 
     # Fall back to allowing all users in development mode

@@ -122,9 +122,13 @@ async def handle_cd_callback(
     assert query.from_user is not None
     user_id = query.from_user.id
     settings: Settings = context.bot_data["settings"]
-    security_validator: Optional[SecurityValidator] = context.bot_data.get("security_validator")
+    security_validator: Optional[SecurityValidator] = context.bot_data.get(
+        "security_validator"
+    )
     audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
-    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get("claude_integration")
+    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get(
+        "claude_integration"
+    )
 
     try:
         current_dir = context.user_data.get(
@@ -303,7 +307,9 @@ async def handle_confirm_callback(
 # Action handlers
 
 
-async def _handle_help_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_help_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle help action."""
     help_text = (
         "🤖 <b>Quick Help</b>\n\n"
@@ -431,7 +437,9 @@ async def _handle_show_projects_action(
         await query.edit_message_text(f"❌ Error loading projects: {str(e)}")
 
 
-async def _handle_new_session_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_new_session_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle new session action."""
     assert context.bot_data is not None
     assert context.user_data is not None
@@ -473,7 +481,9 @@ async def _handle_new_session_action(query: CallbackQuery, context: ContextTypes
     )
 
 
-async def _handle_end_session_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_end_session_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle end session action."""
     assert context.bot_data is not None
     assert context.user_data is not None
@@ -546,14 +556,18 @@ async def _handle_end_session_action(query: CallbackQuery, context: ContextTypes
     )
 
 
-async def _handle_continue_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_continue_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle continue session action."""
     assert context.bot_data is not None
     assert context.user_data is not None
     assert query.from_user is not None
     user_id = query.from_user.id
     settings: Settings = context.bot_data["settings"]
-    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get("claude_integration")
+    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get(
+        "claude_integration"
+    )
 
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
@@ -657,7 +671,9 @@ async def _handle_continue_action(query: CallbackQuery, context: ContextTypes.DE
         )
 
 
-async def _handle_status_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_status_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle status action."""
     assert context.bot_data is not None
     assert context.user_data is not None
@@ -740,7 +756,9 @@ async def _handle_status_action(query: CallbackQuery, context: ContextTypes.DEFA
     )
 
 
-async def _handle_ls_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_ls_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle ls action."""
     assert context.bot_data is not None
     assert context.user_data is not None
@@ -874,12 +892,16 @@ async def _handle_refresh_status_action(
     await _handle_status_action(query, context)
 
 
-async def _handle_refresh_ls_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_refresh_ls_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle refresh ls action."""
     await _handle_ls_action(query, context)
 
 
-async def _handle_export_action(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_export_action(
+    query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle export action."""
     await query.edit_message_text(
         "📤 <b>Export Session</b>\n\n"
@@ -915,7 +937,9 @@ async def handle_quick_action_callback(
         return
 
     # Get Claude integration
-    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get("claude_integration")
+    claude_integration: Optional[ClaudeIntegration] = context.bot_data.get(
+        "claude_integration"
+    )
     if not claude_integration:
         await query.edit_message_text(
             "❌ <b>Claude Integration Not Available</b>\n\n"

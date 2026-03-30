@@ -206,7 +206,9 @@ class DatabaseManager:
         row = await cursor.fetchone()
         return row[0] if row and row[0] else 0
 
-    async def _set_schema_version(self, conn: aiosqlite.Connection, version: int) -> None:
+    async def _set_schema_version(
+        self, conn: aiosqlite.Connection, version: int
+    ) -> None:
         """Set schema version."""
         await conn.execute(
             "INSERT INTO schema_version (version) VALUES (?)", (version,)

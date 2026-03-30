@@ -252,7 +252,27 @@ async def _resume_interrupted_sessions(
 
     from datetime import UTC, datetime, timedelta
 
-    for session_info in interrupted:
+    # Deduplicate: only resume the most recent session per user.
+    # Clear stale duplicates from previous restart loops.
+    seen_users: set[int] = set()
+    deduplicated: list[dict[str, Any]] = []
+    for s in sorted(
+        interrupted,
+        key=lambda x: x.get("in_flight_started_at") or datetime.min,
+        reverse=True,
+    ):
+        uid = s["user_id"]
+        if uid in seen_users:
+            # Stale duplicate — clear it silently
+            try:
+                await storage.clear_in_flight(s["session_id"])
+            except Exception:
+                pass
+            continue
+        seen_users.add(uid)
+        deduplicated.append(s)
+
+    for session_info in deduplicated:
         session_id = session_info["session_id"]
         chat_id = session_info.get("chat_id")
         message_thread_id = session_info.get("message_thread_id")

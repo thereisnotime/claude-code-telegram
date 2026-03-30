@@ -30,6 +30,7 @@ import py_compile
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -331,6 +332,27 @@ class SafeWatcher:
             else:
                 log.error("Rollback unavailable — manual intervention needed")
 
+    def _process_monitor(self, poll_interval: float = 5.0) -> None:
+        """Background thread: restart the bot if it dies unexpectedly.
+
+        watchfiles.watch() blocks until a file changes, so without this
+        thread a dead bot would sit unnoticed until the next file edit.
+        """
+        while not self._shutting_down:
+            time.sleep(poll_interval)
+            if self._shutting_down:
+                break
+            if self.process and self.process.poll() is not None:
+                exit_code = self.process.returncode
+                log.warning(
+                    "Bot process died (exit code %d), restarting",
+                    exit_code,
+                )
+                if self.check_restart_limit():
+                    self.start_bot()
+                else:
+                    log.error("Restart limit reached — not restarting")
+
     def run(self) -> None:
         """Main loop: start bot, watch for changes."""
         # Handle signals for clean shutdown
@@ -346,6 +368,12 @@ class SafeWatcher:
         # Initial start
         self.record_good_state()
         self.start_bot()
+
+        # Background thread to detect bot death independent of file changes
+        monitor = threading.Thread(
+            target=self._process_monitor, daemon=True, name="process-monitor"
+        )
+        monitor.start()
 
         log.info(
             "Watching %s (debounce=%.1fs, health_timeout=%.1fs, rollback=%s)",
@@ -370,15 +398,6 @@ class SafeWatcher:
             ):
                 changed_files = {Path(path) for _, path in changes}
                 self.handle_changes(changed_files)
-
-                # If bot died outside of our restart cycle, restart it
-                if (
-                    self.process
-                    and self.process.poll() is not None
-                    and not self._shutting_down
-                ):
-                    log.warning("Bot process died unexpectedly, restarting")
-                    self.start_bot()
 
         except KeyboardInterrupt:
             pass

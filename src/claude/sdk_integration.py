@@ -259,6 +259,16 @@ class ClaudeSDKManager:
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
 
+    def _is_retryable_error(self, exc: BaseException) -> bool:
+        """Return True for transient errors that warrant a retry.
+        asyncio.TimeoutError is intentional (user-configured timeout) — not retried.
+        Only non-MCP CLIConnectionError is considered transient.
+        """
+        if isinstance(exc, CLIConnectionError):
+            msg = str(exc).lower()
+            return "mcp" not in msg  # "server" alone is too broad
+        return False
+
     async def execute_command(
         self,
         prompt: str,
@@ -393,43 +403,84 @@ class ClaudeSDKManager:
                 finally:
                     await client.disconnect()
 
-            # Execute: race client against timeout and optional interrupt
-            run_task = asyncio.create_task(_run_client())
+            # Execute with timeout and retry, racing against optional interrupt
+            max_attempts = max(1, self.config.claude_retry_max_attempts)
+            last_exc: Optional[BaseException] = None
 
-            interrupt_watcher: Optional["asyncio.Task[None]"] = None
-            if interrupt_event is not None:
+            for attempt in range(max_attempts):
+                # Reset message accumulator each attempt so that a failed attempt
+                # does not pollute the next one with partial/duplicate messages.
+                # _run_client() closes over `messages` by reference (late-binding
+                # closure), so clearing it here is seen by every new call.
+                messages.clear()
 
-                async def _cancel_on_interrupt() -> None:
-                    nonlocal interrupted
-                    await interrupt_event.wait()
-                    interrupted = True
+                if attempt > 0:
+                    delay = min(
+                        self.config.claude_retry_base_delay
+                        * (self.config.claude_retry_backoff_factor ** (attempt - 1)),
+                        self.config.claude_retry_max_delay,
+                    )
+                    logger.warning(
+                        "Retrying Claude SDK command",
+                        attempt=attempt + 1,
+                        max_attempts=max_attempts,
+                        delay_seconds=delay,
+                    )
+                    await asyncio.sleep(delay)
+
+                run_task = asyncio.create_task(_run_client())
+
+                interrupt_watcher: Optional["asyncio.Task[None]"] = None
+                if interrupt_event is not None:
+
+                    async def _cancel_on_interrupt() -> None:
+                        nonlocal interrupted
+                        await interrupt_event.wait()
+                        interrupted = True
+                        run_task.cancel()
+
+                    interrupt_watcher = asyncio.create_task(_cancel_on_interrupt())
+
+                # Note: asyncio.TimeoutError is intentionally NOT retried —
+                # it reflects a user-configured hard limit.
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(run_task),
+                        timeout=self.config.claude_timeout_seconds,
+                    )
+                    break  # success — exit retry loop
+                except asyncio.CancelledError:
+                    if not interrupted:
+                        raise
+                    # Interrupt cancelled the task — wait for cleanup
+                    try:
+                        await run_task
+                    except asyncio.CancelledError:
+                        pass
+                    break  # user interrupted — don't retry
+                except asyncio.TimeoutError:
                     run_task.cancel()
-
-                interrupt_watcher = asyncio.create_task(_cancel_on_interrupt())
-
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(run_task),
-                    timeout=self.config.claude_timeout_seconds,
-                )
-            except asyncio.CancelledError:
-                if not interrupted:
-                    raise
-                # Interrupt cancelled the task — wait for cleanup
-                try:
-                    await run_task
-                except asyncio.CancelledError:
-                    pass
-            except asyncio.TimeoutError:
-                run_task.cancel()
-                try:
-                    await run_task
-                except asyncio.CancelledError:
-                    pass
-                raise
-            finally:
-                if interrupt_watcher is not None:
-                    interrupt_watcher.cancel()
+                    try:
+                        await run_task
+                    except asyncio.CancelledError:
+                        pass
+                    raise  # timeout — don't retry
+                except CLIConnectionError as exc:
+                    if self._is_retryable_error(exc) and attempt < max_attempts - 1:
+                        last_exc = exc
+                        logger.warning(
+                            "Transient connection error, will retry",
+                            attempt=attempt + 1,
+                            error=str(exc),
+                        )
+                        continue
+                    raise  # non-retryable or attempts exhausted
+                finally:
+                    if interrupt_watcher is not None:
+                        interrupt_watcher.cancel()
+            else:
+                if last_exc is not None:
+                    raise last_exc
 
             # Extract cost, tools, and session_id from result message
             cost = 0.0

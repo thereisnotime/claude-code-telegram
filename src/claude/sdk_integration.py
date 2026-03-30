@@ -311,8 +311,8 @@ class ClaudeSDKManager:
                 model=self.config.claude_model or None,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
-                allowed_tools=sdk_allowed_tools,
-                disallowed_tools=sdk_disallowed_tools,
+                allowed_tools=sdk_allowed_tools,  # type: ignore[arg-type]
+                disallowed_tools=sdk_disallowed_tools,  # type: ignore[arg-type]
                 cli_path=self.config.claude_cli_path or None,
                 include_partial_messages=stream_callback is not None,
                 sandbox={
@@ -359,6 +359,7 @@ class ClaudeSDKManager:
                     await client.connect()
                     await client.query(prompt)
 
+                    assert client._query is not None
                     async for raw_data in client._query.receive_messages():
                         try:
                             message = parse_message(raw_data)
@@ -607,7 +608,7 @@ class ClaudeSDKManager:
             raise ClaudeProcessError(f"Unexpected error: {str(e)}")
 
     async def _handle_stream_message(
-        self, message: Message, stream_callback: Callable[[StreamUpdate], None]
+        self, message: Message, stream_callback: Callable[[StreamUpdate], Any]
     ) -> None:
         """Handle streaming message from claude-agent-sdk."""
         try:
@@ -659,11 +660,11 @@ class ClaudeSDKManager:
                             await stream_callback(update)
 
             elif isinstance(message, UserMessage):
-                content = getattr(message, "content", "")
-                if content:
+                user_content = getattr(message, "content", "")
+                if user_content:
                     update = StreamUpdate(
                         type="user",
-                        content=content,
+                        content=str(user_content) if user_content else None,
                     )
                     await stream_callback(update)
 
@@ -680,7 +681,8 @@ class ClaudeSDKManager:
         try:
             with open(config_path) as f:
                 config_data = json.load(f)
-            return config_data.get("mcpServers", {})
+            result: Dict[str, Any] = config_data.get("mcpServers", {})
+            return result
         except (json.JSONDecodeError, OSError) as e:
             logger.error(
                 "Failed to load MCP config", path=str(config_path), error=str(e)

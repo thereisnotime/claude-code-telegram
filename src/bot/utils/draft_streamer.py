@@ -2,7 +2,7 @@
 
 import secrets
 import time
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import structlog
 import telegram
@@ -118,7 +118,7 @@ class DraftStreamer:
             draft_text = "\u2026" + draft_text[-(TELEGRAM_MAX_MESSAGE_LENGTH - 1) :]
 
         try:
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "chat_id": self.chat_id,
                 "text": draft_text,
                 "draft_id": self.draft_id,

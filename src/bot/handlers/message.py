@@ -1,7 +1,7 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import structlog
 from telegram import InputMediaPhoto, Update
@@ -17,6 +17,9 @@ from ...claude.exceptions import (
 )
 from ...config.settings import Settings
 from ...security.audit import AuditLogger
+
+if TYPE_CHECKING:
+    from ...claude.sdk_integration import ClaudeResponse, StreamUpdate
 from ...security.rate_limiter import RateLimiter
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
@@ -29,7 +32,7 @@ from ..utils.image_extractor import (
 logger = structlog.get_logger()
 
 
-async def _format_progress_update(update_obj) -> Optional[str]:
+async def _format_progress_update(update_obj: "StreamUpdate") -> Optional[str]:
     """Format progress updates with enhanced context and visual indicators."""
     if update_obj.type == "tool_result":
         # Show tool completion status
@@ -297,8 +300,12 @@ async def handle_text_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """Handle regular text messages as Claude prompts."""
+    assert update.effective_user is not None
+    assert update.message is not None
+    assert context.user_data is not None
+    assert context.bot_data is not None
     user_id = update.effective_user.id
-    message_text = update.message.text
+    message_text = update.message.text or ""
     settings: Settings = context.bot_data["settings"]
 
     # Get services
@@ -359,7 +366,7 @@ async def handle_text_message(
         mcp_images: list[ImageAttachment] = []
 
         # Enhanced stream updates handler with progress tracking
-        async def stream_handler(update_obj):
+        async def stream_handler(update_obj: "StreamUpdate") -> None:
             # Intercept send_image_to_user MCP tool calls.
             # The SDK namespaces MCP tools as "mcp__<server>__<tool>".
             if update_obj.tool_calls:
@@ -626,7 +633,7 @@ async def handle_text_message(
             await audit_logger.log_command(
                 user_id=user_id,
                 command="text_message",
-                args=[update.message.text[:100]],  # First 100 chars
+                args=[message_text[:100]],
                 success=True,
             )
 
@@ -646,7 +653,7 @@ async def handle_text_message(
             await audit_logger.log_command(
                 user_id=user_id,
                 command="text_message",
-                args=[update.message.text[:100]],
+                args=[message_text[:100]],
                 success=False,
             )
 
@@ -655,6 +662,11 @@ async def handle_text_message(
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle file uploads."""
+    assert update.effective_user is not None
+    assert update.message is not None
+    assert update.message.document is not None
+    assert context.user_data is not None
+    assert context.bot_data is not None
     user_id = update.effective_user.id
     document = update.message.document
     settings: Settings = context.bot_data["settings"]
@@ -679,10 +691,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         # Validate filename using security validator
         if security_validator:
-            valid, error = security_validator.validate_filename(document.file_name)
+            valid, error = security_validator.validate_filename(document.file_name or "")
             if not valid:
                 await update.message.reply_text(
-                    f"❌ <b>File Upload Rejected</b>\n\n{escape_html(error)}",
+                    f"❌ <b>File Upload Rejected</b>\n\n{escape_html(error or '')}",
                     parse_mode="HTML",
                 )
 
@@ -698,17 +710,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # Check file size limits
         max_size = 10 * 1024 * 1024  # 10MB
-        if document.file_size > max_size:
+        file_size = document.file_size or 0
+        if file_size > max_size:
             await update.message.reply_text(
                 f"❌ <b>File Too Large</b>\n\n"
                 f"Maximum file size: {max_size // 1024 // 1024}MB\n"
-                f"Your file: {document.file_size / 1024 / 1024:.1f}MB",
+                f"Your file: {file_size / 1024 / 1024:.1f}MB",
                 parse_mode="HTML",
             )
             return
 
         # Check rate limit for file processing
-        file_cost = _estimate_file_processing_cost(document.file_size)
+        file_cost = _estimate_file_processing_cost(file_size)
         if rate_limiter:
             allowed, limit_message = await rate_limiter.check_rate_limit(
                 user_id, file_cost
@@ -861,10 +874,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if audit_logger:
             await audit_logger.log_file_access(
                 user_id=user_id,
-                file_path=document.file_name,
+                file_path=document.file_name or "",
                 action="upload_processed",
                 success=True,
-                file_size=document.file_size,
+                file_size=file_size,
             )
 
     except Exception as e:
@@ -880,10 +893,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if audit_logger:
             await audit_logger.log_file_access(
                 user_id=user_id,
-                file_path=document.file_name,
+                file_path=document.file_name or "",
                 action="upload_failed",
                 success=False,
-                file_size=document.file_size,
+                file_size=file_size,
             )
 
         logger.error("Error processing document", error=str(e), user_id=user_id)
@@ -891,6 +904,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle photo uploads."""
+    assert update.effective_user is not None
+    assert update.message is not None
+    assert context.user_data is not None
+    assert context.bot_data is not None
     user_id = update.effective_user.id
     settings: Settings = context.bot_data["settings"]
 
@@ -1008,6 +1025,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle voice message uploads."""
+    assert update.effective_user is not None
+    assert update.message is not None
+    assert context.user_data is not None
+    assert context.bot_data is not None
     user_id = update.effective_user.id
     settings: Settings = context.bot_data["settings"]
 
@@ -1161,6 +1182,8 @@ async def _generate_placeholder_response(
     message_text: str, context: ContextTypes.DEFAULT_TYPE
 ) -> dict:
     """Generate placeholder response until Claude integration is implemented."""
+    assert context.bot_data is not None
+    assert context.user_data is not None
     settings: Settings = context.bot_data["settings"]
     current_dir = getattr(
         context.user_data, "current_directory", settings.approved_directory
@@ -1229,8 +1252,11 @@ async def _generate_placeholder_response(
 
 
 def _update_working_directory_from_claude_response(
-    claude_response, context, settings, user_id
-):
+    claude_response: "ClaudeResponse",
+    context: ContextTypes.DEFAULT_TYPE,
+    settings: Settings,
+    user_id: int,
+) -> None:
     """Update the working directory based on Claude's response content."""
     import re
     from pathlib import Path
@@ -1244,6 +1270,8 @@ def _update_working_directory_from_claude_response(
         r"(?:^|\n).*?Working directory:?\s*([^\s\n]+)",  # working directory indication
     ]
 
+    if context.user_data is None:
+        return
     content = claude_response.content.lower()
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory

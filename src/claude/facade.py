@@ -11,7 +11,7 @@ import structlog
 
 from ..config.settings import Settings
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
-from .session import SessionManager
+from .session import ClaudeSession, SessionManager
 
 logger = structlog.get_logger()
 
@@ -69,6 +69,7 @@ class ClaudeIntegration:
                 )
 
         # Get or create session
+        assert self.session_manager is not None, "session_manager is required"
         session = await self.session_manager.get_or_create_session(
             user_id, working_directory, session_id
         )
@@ -209,13 +210,14 @@ class ClaudeIntegration:
         self,
         user_id: int,
         working_directory: Path,
-    ) -> Optional["ClaudeSession"]:  # noqa: F821
+    ) -> Optional[ClaudeSession]:
         """Find the most recent resumable session for a user in a directory.
 
         Returns the session if one exists that is non-expired and has a real
         (non-temporary) session ID from Claude. Returns None otherwise.
         """
 
+        assert self.session_manager is not None, "session_manager is required"
         sessions = await self.session_manager._get_user_sessions(user_id)
 
         matching_sessions = [
@@ -247,6 +249,7 @@ class ClaudeIntegration:
         )
 
         # Get user's sessions
+        assert self.session_manager is not None, "session_manager is required"
         sessions = await self.session_manager._get_user_sessions(user_id)
 
         # Find most recent session in this directory (exclude sessions without IDs)
@@ -277,10 +280,12 @@ class ClaudeIntegration:
         self, session_id: str, user_id: int
     ) -> Optional[Dict[str, Any]]:
         """Get session information (scoped to requesting user)."""
+        assert self.session_manager is not None, "session_manager is required"
         return await self.session_manager.get_session_info(session_id, user_id)
 
     async def get_user_sessions(self, user_id: int) -> List[Dict[str, Any]]:
         """Get all sessions for a user."""
+        assert self.session_manager is not None, "session_manager is required"
         sessions = await self.session_manager._get_user_sessions(user_id)
         return [
             {
@@ -298,10 +303,12 @@ class ClaudeIntegration:
 
     async def cleanup_expired_sessions(self) -> int:
         """Clean up expired sessions."""
+        assert self.session_manager is not None, "session_manager is required"
         return await self.session_manager.cleanup_expired_sessions()
 
     async def get_user_summary(self, user_id: int) -> Dict[str, Any]:
         """Get comprehensive user summary."""
+        assert self.session_manager is not None, "session_manager is required"
         session_summary = await self.session_manager.get_user_session_summary(user_id)
 
         return {

@@ -60,26 +60,27 @@ class SessionExporter:
             ValueError: If session not found or invalid format
         """
         # Get session data
-        session = await self.storage.get_session(user_id, session_id)
+        session = await self.storage.sessions.get_session(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
         # Get session messages
-        messages = await self.storage.get_session_messages(
+        messages = await self.storage.messages.get_session_messages(
             session_id, limit=MAX_SESSION_LENGTH
         )
 
         # Export based on format
+        session_dict = session.to_dict()
         if format == ExportFormat.MARKDOWN:
-            content = await self._export_markdown(session, messages)
+            content = await self._export_markdown(session_dict, messages)
             mime_type = "text/markdown"
             extension = "md"
         elif format == ExportFormat.JSON:
-            content = await self._export_json(session, messages)
+            content = await self._export_json(session_dict, messages)
             mime_type = "application/json"
             extension = "json"
         elif format == ExportFormat.HTML:
-            content = await self._export_html(session, messages)
+            content = await self._export_html(session_dict, messages)
             mime_type = "text/html"
             extension = "html"
         else:

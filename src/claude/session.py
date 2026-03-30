@@ -173,11 +173,11 @@ class SessionManager:
 
         # Try to load from storage (filtered by user_id)
         if session_id:
-            session = await self.storage.load_session(session_id, user_id)
-            if session and not session.is_expired(self.config.session_timeout_hours):
-                self.active_sessions[session_id] = session
+            loaded_session = await self.storage.load_session(session_id, user_id)
+            if loaded_session and not loaded_session.is_expired(self.config.session_timeout_hours):
+                self.active_sessions[session_id] = loaded_session
                 logger.info("Loaded session from storage", session_id=session_id)
-                return session
+                return loaded_session
 
         # Check user session limit
         user_sessions = await self._get_user_sessions(user_id)

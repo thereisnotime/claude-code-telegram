@@ -136,6 +136,7 @@ class MessageOrchestrator:
             for key, value in self.deps.items():
                 context.bot_data[key] = value
             context.bot_data["settings"] = self.settings
+            assert context.user_data is not None
             context.user_data.pop("_thread_context", None)
 
             is_sync_bypass = handler.__name__ == "sync_threads"
@@ -213,6 +214,7 @@ class MessageOrchestrator:
             )
             return False
 
+        assert context.user_data is not None
         state_key = f"{chat.id}:{message_thread_id}"
         thread_states = context.user_data.setdefault("thread_state", {})
         state = thread_states.get(state_key, {})
@@ -239,6 +241,7 @@ class MessageOrchestrator:
 
     def _persist_thread_state(self, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Persist compatibility keys back into per-thread state."""
+        assert context.user_data is not None
         thread_context = context.user_data.get("_thread_context")
         if not thread_context:
             return
@@ -295,8 +298,9 @@ class MessageOrchestrator:
                 await query.answer()
             except Exception:
                 pass
-            if query.message:
-                await query.message.reply_text(message, parse_mode="HTML")
+            msg = query.message
+            if msg and hasattr(msg, "reply_text"):
+                await msg.reply_text(message, parse_mode="HTML")  # type: ignore[union-attr]
             return
 
         if update.effective_message:
@@ -325,8 +329,7 @@ class MessageOrchestrator:
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
 
-        # Derive known commands dynamically — avoids drift when new commands are added
-        self._known_commands: frozenset[str] = frozenset(cmd for cmd, _ in handlers)
+        self._known_commands = frozenset(cmd for cmd, _ in handlers)
 
         for cmd, handler in handlers:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
@@ -485,6 +488,9 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Brief welcome, no buttons."""
+        assert update.message is not None
+        assert update.effective_user is not None
+        assert context.user_data is not None
         user = update.effective_user
         sync_line = ""
         if (
@@ -539,6 +545,8 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Reset session, one-line confirmation."""
+        assert update.message is not None
+        assert context.user_data is not None
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
@@ -549,6 +557,9 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Compact one-line status, no buttons."""
+        assert update.message is not None
+        assert update.effective_user is not None
+        assert context.user_data is not None
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
@@ -575,6 +586,7 @@ class MessageOrchestrator:
 
     def _get_verbose_level(self, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Return effective verbose level: per-user override or global default."""
+        assert context.user_data is not None
         user_override = context.user_data.get("verbose_level")
         if user_override is not None:
             return int(user_override)
@@ -584,6 +596,8 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Set output verbosity: /verbose [0|1|2]."""
+        assert update.message is not None
+        assert context.user_data is not None
         args = update.message.text.split()[1:] if update.message.text else []
         if not args:
             current = self._get_verbose_level(context)
@@ -659,22 +673,21 @@ class MessageOrchestrator:
         if tool_name in ("Read", "Write", "Edit", "MultiEdit"):
             path = tool_input.get("file_path") or tool_input.get("path", "")
             if path:
-                # Show just the filename, not the full path
-                return path.rsplit("/", 1)[-1]
+                return str(path).rsplit("/", 1)[-1]
         if tool_name in ("Glob", "Grep"):
             pattern = tool_input.get("pattern", "")
             if pattern:
-                return pattern[:60]
+                return str(pattern)[:60]
         if tool_name == "Bash":
             cmd = tool_input.get("command", "")
             if cmd:
-                return _redact_secrets(cmd[:100])[:80]
+                return _redact_secrets(str(cmd)[:100])[:80]
         if tool_name in ("WebFetch", "WebSearch"):
-            return (tool_input.get("url", "") or tool_input.get("query", ""))[:60]
+            return str(tool_input.get("url", "") or tool_input.get("query", ""))[:60]
         if tool_name == "Task":
             desc = tool_input.get("description", "")
             if desc:
-                return desc[:60]
+                return str(desc)[:60]
         # Generic: show first key's value
         for v in tool_input.values():
             if isinstance(v, str) and v:
@@ -756,6 +769,8 @@ class MessageOrchestrator:
                         tc_input = tc.get("input", {})
                         file_path = tc_input.get("file_path", "")
                         caption = tc_input.get("caption", "")
+                        assert approved_directory is not None
+                        assert mcp_images is not None
                         img = validate_image_path(
                             file_path, approved_directory, caption
                         )
@@ -831,6 +846,7 @@ class MessageOrchestrator:
 
         Returns True if the caption was successfully embedded in the photo message.
         """
+        assert update.message is not None
         photos: List[ImageAttachment] = []
         documents: List[ImageAttachment] = []
         for img in images:
@@ -909,8 +925,11 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Direct Claude passthrough. Simple progress. No suggestions."""
+        assert update.effective_user is not None
+        assert update.message is not None
+        assert context.user_data is not None
         user_id = update.effective_user.id
-        message_text = update.message.text
+        message_text = update.message.text or ""
 
         logger.info(
             "Agentic text message",
@@ -1158,8 +1177,12 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Process file upload -> Claude, minimal chrome."""
+        assert update.effective_user is not None
+        assert update.message is not None
+        assert context.user_data is not None
         user_id = update.effective_user.id
         document = update.message.document
+        assert document is not None
 
         logger.info(
             "Agentic document upload",
@@ -1177,7 +1200,7 @@ class MessageOrchestrator:
 
         # Size check
         max_size = 10 * 1024 * 1024
-        if document.file_size > max_size:
+        if document.file_size is not None and document.file_size > max_size:
             await update.message.reply_text(
                 f"File too large ({document.file_size / 1024 / 1024:.1f}MB). Max: 10MB."
             )
@@ -1337,6 +1360,8 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Process photo -> Claude, minimal chrome."""
+        assert update.effective_user is not None
+        assert update.message is not None
         user_id = update.effective_user.id
 
         features = context.bot_data.get("features")
@@ -1376,6 +1401,8 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Transcribe voice message -> Claude, minimal chrome."""
+        assert update.effective_user is not None
+        assert update.message is not None
         user_id = update.effective_user.id
 
         features = context.bot_data.get("features")
@@ -1424,6 +1451,8 @@ class MessageOrchestrator:
         chat: Any,
     ) -> None:
         """Run a media-derived prompt through Claude and send responses."""
+        assert update.message is not None
+        assert context.user_data is not None
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
             await progress_msg.edit_text(
@@ -1566,6 +1595,9 @@ class MessageOrchestrator:
         /repo          — list subdirectories with git indicators
         /repo <name>   — switch to that directory, resume session if available
         """
+        assert update.message is not None
+        assert update.effective_user is not None
+        assert context.user_data is not None
         args = update.message.text.split()[1:] if update.message.text else []
         base = self.settings.approved_directory
         current_dir = context.user_data.get("current_directory", base)
@@ -1659,6 +1691,8 @@ class MessageOrchestrator:
     ) -> None:
         """Handle stop: callbacks — interrupt a running Claude request."""
         query = update.callback_query
+        assert query is not None
+        assert query.data is not None
         target_user_id = int(query.data.split(":", 1)[1])
 
         # Only the requesting user can stop their own request
@@ -1690,6 +1724,9 @@ class MessageOrchestrator:
     ) -> None:
         """Handle cd: callbacks — switch directory and resume session if available."""
         query = update.callback_query
+        assert query is not None
+        assert query.data is not None
+        assert context.user_data is not None
         await query.answer()
 
         data = query.data

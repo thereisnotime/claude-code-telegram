@@ -162,7 +162,7 @@ class VoiceHandler:
             return self._mistral_client
 
         try:
-            from mistralai import Mistral
+            from mistralai import Mistral  # type: ignore[import-not-found]
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "Optional dependency 'mistralai' is missing for voice transcription. "
@@ -205,7 +205,7 @@ class VoiceHandler:
             return self._openai_client
 
         try:
-            from openai import AsyncOpenAI
+            from openai import AsyncOpenAI  # type: ignore[import-not-found]
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "Optional dependency 'openai' is missing for voice transcription. "

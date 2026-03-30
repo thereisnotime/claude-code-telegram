@@ -170,8 +170,9 @@ class QuickActionManager:
         }
 
         # Analyze recent messages for context clues
-        if session.context:
-            recent_messages = session.context.get("recent_messages", [])
+        session_context: Optional[Dict[str, Any]] = getattr(session, "context", None)
+        if session_context:
+            recent_messages = session_context.get("recent_messages", [])
             for msg in recent_messages:
                 content = msg.get("content", "").lower()
 
@@ -264,7 +265,7 @@ class QuickActionManager:
             raise ValueError(f"Unknown action: {action_id}")
 
         self.logger.info(
-            f"Executing quick action: {action.name} for session {session.id}"
+            f"Executing quick action: {action.name} for session {session.session_id}"
         )
 
         # Return the command - actual execution is handled by the bot

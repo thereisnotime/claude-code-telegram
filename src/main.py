@@ -302,13 +302,29 @@ async def _resume_interrupted_sessions(
         )
 
         try:
-            response = await claude_integration.run_command(
-                prompt=resume_prompt,
-                working_directory=Path(working_dir),
-                user_id=user_id,
+            _logger.info(
+                "Auto-resuming session",
                 session_id=session_id,
-                chat_id=chat_id,
-                message_thread_id=message_thread_id,
+                user_id=user_id,
+                working_dir=working_dir,
+            )
+            response = await asyncio.wait_for(
+                claude_integration.run_command(
+                    prompt=resume_prompt,
+                    working_directory=Path(working_dir),
+                    user_id=user_id,
+                    session_id=session_id,
+                    chat_id=chat_id,
+                    message_thread_id=message_thread_id,
+                ),
+                timeout=120.0,
+            )
+
+            _logger.info(
+                "Auto-resume got response",
+                session_id=session_id,
+                content_length=len(response.content or ""),
+                is_error=response.is_error,
             )
 
             # Send response back to the chat
@@ -331,20 +347,28 @@ async def _resume_interrupted_sessions(
                         text=msg.text,
                     )
 
+        except asyncio.TimeoutError:
+            _logger.error("Auto-resume timed out", session_id=session_id)
+            try:
+                await telegram_bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=message_thread_id,
+                    text="Auto-resume timed out. Send your request again.",
+                )
+            except Exception:
+                pass
         except Exception as e:
             _logger.error(
                 "Failed to resume session",
                 session_id=session_id,
                 error=str(e),
+                error_type=type(e).__name__,
             )
             try:
                 await telegram_bot.send_message(
                     chat_id=chat_id,
                     message_thread_id=message_thread_id,
-                    text=(
-                        "Could not auto-resume the previous session. "
-                        "Please send your request again."
-                    ),
+                    text=f"Auto-resume failed: {e}\nSend your request again.",
                 )
             except Exception:
                 pass

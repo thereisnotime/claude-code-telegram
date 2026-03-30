@@ -42,6 +42,17 @@ from .utils.image_extractor import (
 
 logger = structlog.get_logger()
 
+
+def _format_size(size_bytes: int) -> str:
+    """Format byte size to human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
 # Patterns that look like secrets/credentials in CLI arguments
 _SECRET_PATTERNS: List[re.Pattern[str]] = [
     # API keys / tokens (sk-ant-..., sk-..., ghp_..., gho_..., github_pat_..., xoxb-...)
@@ -454,6 +465,7 @@ class MessageOrchestrator:
                 BotCommand("start", "Start the bot"),
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
+                BotCommand("status_all", "Show all sessions (DB + FS)"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
@@ -583,6 +595,118 @@ class MessageOrchestrator:
         await update.message.reply_text(
             f"📂 {dir_display} · Session: {session_status}{cost_str}"
         )
+
+    async def agentic_status_all(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Unified view of all sessions from DB and filesystem."""
+        assert update.message is not None
+        assert update.effective_user is not None
+
+        from ..claude.fs_sessions import discover_fs_sessions
+
+        # 1. Get all DB sessions (active + inactive)
+        storage = context.bot_data.get("storage")
+        db_sessions: list = []
+        if storage:
+            try:
+                db_sessions = await storage.get_all_sessions_all_states()
+            except Exception as e:
+                logger.warning("Failed to load DB sessions", error=str(e))
+
+        # 2. Discover filesystem sessions (sync disk I/O in thread)
+        try:
+            fs_sessions = await asyncio.to_thread(discover_fs_sessions)
+        except Exception as e:
+            logger.warning("Failed to discover FS sessions", error=str(e))
+            fs_sessions = []
+
+        # 3. Build the response
+        db_count = len(db_sessions)
+        fs_count = len(fs_sessions)
+        running_count = sum(1 for fs in fs_sessions if fs.is_running)
+
+        lines: list[str] = []
+        lines.append(
+            f"<b>All Sessions</b>  "
+            f"({db_count} DB / {fs_count} FS / {running_count} running)\n"
+        )
+
+        # --- DB Sessions ---
+        if db_sessions:
+            lines.append("<b>DB Sessions:</b>")
+            for s in db_sessions[:20]:
+                icon = "\u25cf" if s.is_active else "\u25cb"
+                sid_short = s.session_id[:8] if s.session_id else "?"
+                path_short = (
+                    s.project_path.replace("/home/usr200", "~")
+                    if s.project_path
+                    else "?"
+                )
+                active_label = "active" if s.is_active else "inactive"
+                cost_str = f"${s.total_cost:.2f}" if s.total_cost else "$0.00"
+                lines.append(
+                    f"  {icon} <code>{escape_html(sid_short)}</code>"
+                    f" {escape_html(path_short)}"
+                    f" ({active_label}, {s.message_count} msgs, {cost_str})"
+                )
+            if db_count > 20:
+                lines.append(f"  ... and {db_count - 20} more")
+        else:
+            lines.append("<b>DB Sessions:</b> none")
+
+        lines.append("")
+
+        # --- FS Sessions ---
+        if fs_sessions:
+            lines.append("<b>FS Sessions:</b>")
+            db_sid_set = {s.session_id for s in db_sessions}
+            for fs in fs_sessions[:30]:
+                if fs.is_running:
+                    icon = "\U0001f7e2"
+                    run_label = f" [PID {fs.running_pid}]"
+                else:
+                    icon = "\u26aa"
+                    run_label = ""
+
+                sid_short = fs.session_id[:8]
+                size_str = _format_size(fs.total_size_bytes)
+                db_tag = " [DB]" if fs.session_id in db_sid_set else ""
+                sidechain_tag = " (sidechain)" if fs.is_sidechain else ""
+
+                label = fs.custom_title or (
+                    fs.first_prompt[:40] if fs.first_prompt else sid_short
+                )
+                label = label.replace("\n", " ")
+
+                lines.append(
+                    f"  {icon} <code>{escape_html(sid_short)}</code>"
+                    f" ({size_str}, {fs.message_count} msgs)"
+                    f"{run_label}{db_tag}{sidechain_tag}"
+                )
+            if fs_count > 30:
+                lines.append(f"  ... and {fs_count - 30} more")
+        else:
+            lines.append("<b>FS Sessions:</b> none")
+
+        # --- Cross-reference ---
+        db_sid_set = {s.session_id for s in db_sessions}
+        fs_sid_set = {fs.session_id for fs in fs_sessions}
+        db_only = db_sid_set - fs_sid_set
+        fs_only = fs_sid_set - db_sid_set
+        if db_only or fs_only:
+            lines.append("")
+            lines.append("<b>Cross-reference:</b>")
+            if db_only:
+                lines.append(f"  DB-only (no FS data): {len(db_only)}")
+            if fs_only:
+                lines.append(f"  FS-only (not in DB): {len(fs_only)}")
+
+        response_text = "\n".join(lines)
+        if len(response_text) > 4000:
+            response_text = response_text[:3990] + "\n\n<i>(truncated)</i>"
+
+        await update.message.reply_text(response_text, parse_mode="HTML")
 
     def _get_verbose_level(self, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Return effective verbose level: per-user override or global default."""

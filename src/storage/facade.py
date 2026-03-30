@@ -247,6 +247,10 @@ class Storage:
             "projects": list(set(s.project_path for s in sessions)),
         }
 
+    async def get_all_sessions_all_states(self) -> list[SessionModel]:
+        """Get all sessions (active and inactive) from the database."""
+        return await self.sessions.get_all_sessions_all_states()
+
     async def get_session_history(
         self, session_id: str, limit: int = 50
     ) -> Optional[Dict[str, Any]]:

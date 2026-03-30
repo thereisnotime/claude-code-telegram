@@ -227,6 +227,15 @@ class SessionRepository:
             rows = await cursor.fetchall()
             return [SessionModel.from_row(row) for row in rows]
 
+    async def get_all_sessions_all_states(self) -> List[SessionModel]:
+        """Get all sessions regardless of active/inactive status."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM sessions ORDER BY last_used DESC"
+            )
+            rows = await cursor.fetchall()
+            return [SessionModel.from_row(row) for row in rows]
+
 
 class ProjectThreadRepository:
     """Project-thread mapping data access."""
@@ -616,7 +625,9 @@ class CostTrackingRepository:
         """Initialize repository."""
         self.db = db_manager
 
-    async def update_daily_cost(self, user_id: int, cost: float, date: Optional[str] = None) -> None:
+    async def update_daily_cost(
+        self, user_id: int, cost: float, date: Optional[str] = None
+    ) -> None:
         """Update daily cost for user."""
         if not date:
             date = datetime.now(UTC).strftime("%Y-%m-%d")

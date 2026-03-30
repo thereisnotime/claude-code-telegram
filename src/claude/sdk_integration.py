@@ -519,8 +519,8 @@ class ClaudeSDKManager:
                             for block in msg_content:
                                 if hasattr(block, "text"):
                                     content_parts.append(block.text)
-                        elif isinstance(msg_content, str):
-                            content_parts.append(msg_content)
+                        elif msg_content:
+                            content_parts.append(str(msg_content))
                 content = "\n".join(content_parts).strip()
 
             if not content and tools_used:

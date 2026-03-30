@@ -54,6 +54,13 @@ def _format_size(size_bytes: int) -> str:
         return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
+_MEDIA_TYPE_MAP = {
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
+
 # Patterns that look like secrets/credentials in CLI arguments
 _SECRET_PATTERNS: List[re.Pattern[str]] = [
     # API keys / tokens (sk-ant-..., sk-..., ghp_..., gho_..., github_pat_..., xoxb-...)
@@ -1751,6 +1758,14 @@ class MessageOrchestrator:
             processed_image = await image_handler.process_image(
                 photo, update.message.caption
             )
+            fmt = processed_image.metadata.get("format", "png")
+            images = [
+                {
+                    "data": processed_image.base64_data,
+                    "media_type": _MEDIA_TYPE_MAP.get(fmt, "image/png"),
+                }
+            ]
+
             await self._handle_agentic_media_message(
                 update=update,
                 context=context,
@@ -1758,6 +1773,7 @@ class MessageOrchestrator:
                 progress_msg=progress_msg,
                 user_id=user_id,
                 chat=chat,
+                images=images,
             )
 
         except Exception as e:
@@ -1820,6 +1836,7 @@ class MessageOrchestrator:
         progress_msg: Any,
         user_id: int,
         chat: Any,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """Run a media-derived prompt through Claude and send responses."""
         assert update.message is not None
@@ -1866,6 +1883,7 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                images=images,
             )
         finally:
             heartbeat.cancel()

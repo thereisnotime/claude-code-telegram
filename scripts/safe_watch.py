@@ -403,13 +403,10 @@ def main() -> None:
         default=os.environ.get("SAFE_WATCH_COMMAND", "claude-telegram-bot"),
         help="Bot command to run (default: claude-telegram-bot)",
     )
-    parser.add_argument(
-        "extra_args",
-        nargs="*",
-        help="Extra arguments passed to the bot command",
-    )
 
-    args = parser.parse_args()
+    # Use parse_known_args so unrecognized flags (like --env-file, --debug)
+    # are passed through to the bot command automatically.
+    args, bot_args = parser.parse_known_args()
 
     watcher = SafeWatcher(
         command=args.command,
@@ -418,7 +415,7 @@ def main() -> None:
         enable_rollback=not args.no_rollback,
         max_restarts=args.max_restarts,
         restart_window_s=args.restart_window,
-        extra_args=args.extra_args,
+        extra_args=bot_args,
     )
     watcher.run()
 

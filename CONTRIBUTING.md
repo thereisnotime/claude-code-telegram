@@ -32,6 +32,8 @@ This project is currently under active development with the following status:
    ```bash
    make dev
    ```
+   This also installs **pre-commit hooks** that automatically format your code (black, isort) on each commit, so you never need to worry about formatting manually.
+
    > **Linux users**: If `make dev` shows a `DBusErrorResponse` / `ItemNotFoundException`
    > error for `aiolimiter`, this is a known Poetry keyring issue on Linux. To prevent
    > it, disable the keyring backend before running `make dev`:
@@ -267,6 +269,7 @@ Fixes #123
 - [ ] Manual testing completed
 
 ## Checklist
+- [ ] `make format` has been run (or pre-commit hooks are installed via `make dev`)
 - [ ] Code follows project style guidelines
 - [ ] Self-review completed
 - [ ] Documentation updated

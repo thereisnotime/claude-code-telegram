@@ -78,6 +78,7 @@ class SafeWatcher:
         self.last_good_commit: Optional[str] = None
         self.restart_times: list[float] = []
         self._shutting_down = False
+        self._started_at: float = 0.0  # timestamp of last bot start
 
     def start_bot(self) -> subprocess.Popen:
         """Start the bot as a subprocess."""
@@ -90,6 +91,7 @@ class SafeWatcher:
             stdin=subprocess.DEVNULL,
         )
         self.process = proc
+        self._started_at = time.time()
         return proc
 
     def stop_bot(self, timeout: float = 10.0) -> None:
@@ -262,6 +264,19 @@ class SafeWatcher:
     def handle_changes(self, changed_files: set[Path]) -> None:
         """Handle detected file changes: validate, restart, health-check."""
         if self._shutting_down:
+            return
+
+        # Grace period: ignore changes detected shortly after startup.
+        # watchfiles can fire for pre-existing changes (modified before
+        # the watcher started), which would kill a healthy bot mid-init.
+        age = time.time() - self._started_at
+        grace = self.debounce_s + self.health_timeout_s
+        if age < grace:
+            log.info(
+                "Ignoring changes during startup grace period (%.0fs / %.0fs)",
+                age,
+                grace,
+            )
             return
 
         log.info(

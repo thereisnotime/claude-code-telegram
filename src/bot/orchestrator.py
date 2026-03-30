@@ -333,6 +333,7 @@ class MessageOrchestrator:
             ("start", self.agentic_start),
             ("new", self.agentic_new),
             ("status", self.agentic_status),
+            ("status_all", self.agentic_status_all),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),

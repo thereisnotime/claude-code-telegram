@@ -227,6 +227,8 @@ async def _resume_interrupted_sessions(
 
     await asyncio.sleep(delay_seconds)
 
+    if not claude_integration.session_manager:
+        return
     storage = claude_integration.session_manager.storage
     if not hasattr(storage, "get_interrupted_sessions"):
         return

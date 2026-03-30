@@ -90,7 +90,7 @@ class ClaudeIntegration:
 
             # Mark in-flight for crash recovery (only for sessions with real IDs)
             marked_in_flight = False
-            if should_continue and chat_id is not None:
+            if should_continue and chat_id is not None and self.session_manager:
                 try:
                     await self.session_manager.storage.mark_in_flight(
                         session_id=session.session_id,
@@ -146,7 +146,7 @@ class ClaudeIntegration:
                     raise
             finally:
                 # Clear in-flight flag regardless of success/failure
-                if marked_in_flight:
+                if marked_in_flight and self.session_manager:
                     try:
                         await self.session_manager.storage.clear_in_flight(
                             session.session_id

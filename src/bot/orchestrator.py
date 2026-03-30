@@ -1008,7 +1008,7 @@ class MessageOrchestrator:
                 force_new=force_new,
                 interrupt_event=interrupt_event,
                 chat_id=chat.id,
-                message_thread_id=update.message.message_thread_id,
+                message_thread_id=getattr(update.message, "message_thread_id", None),
             )
 
             # New session created successfully — clear the one-shot flag

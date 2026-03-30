@@ -39,6 +39,8 @@ class ClaudeIntegration:
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
         force_new: bool = False,
         interrupt_event: Optional["asyncio.Event"] = None,
+        chat_id: Optional[int] = None,
+        message_thread_id: Optional[int] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -71,6 +73,12 @@ class ClaudeIntegration:
             user_id, working_directory, session_id
         )
 
+        # Store chat context on session for persistence
+        if chat_id is not None:
+            session.chat_id = chat_id
+        if message_thread_id is not None:
+            session.message_thread_id = message_thread_id
+
         # Execute command
         try:
             # Continue session if we have an existing session with a real ID
@@ -79,6 +87,20 @@ class ClaudeIntegration:
 
             # For new sessions, don't pass session_id to Claude Code
             claude_session_id = session.session_id if should_continue else None
+
+            # Mark in-flight for crash recovery (only for sessions with real IDs)
+            marked_in_flight = False
+            if should_continue and chat_id is not None:
+                try:
+                    await self.session_manager.storage.mark_in_flight(
+                        session_id=session.session_id,
+                        chat_id=chat_id,
+                        message_thread_id=message_thread_id,
+                        prompt=prompt,
+                    )
+                    marked_in_flight = True
+                except Exception as e:
+                    logger.debug("Failed to mark in-flight", error=str(e))
 
             try:
                 response = await self._execute(
@@ -99,13 +121,19 @@ class ClaudeIntegration:
                         failed_session_id=claude_session_id,
                         error=str(resume_error),
                     )
-                    # Clean up the stale session
+                    # Clean up the stale session (also clears in-flight)
                     await self.session_manager.remove_session(session.session_id)
+                    marked_in_flight = False
 
                     # Create a fresh session and retry
                     session = await self.session_manager.get_or_create_session(
                         user_id, working_directory
                     )
+                    if chat_id is not None:
+                        session.chat_id = chat_id
+                    if message_thread_id is not None:
+                        session.message_thread_id = message_thread_id
+
                     response = await self._execute(
                         prompt=prompt,
                         working_directory=working_directory,
@@ -116,6 +144,15 @@ class ClaudeIntegration:
                     )
                 else:
                     raise
+            finally:
+                # Clear in-flight flag regardless of success/failure
+                if marked_in_flight:
+                    try:
+                        await self.session_manager.storage.clear_in_flight(
+                            session.session_id
+                        )
+                    except Exception as e:
+                        logger.debug("Failed to clear in-flight", error=str(e))
 
             # Update session (assigns real session_id for new sessions)
             await self.session_manager.update_session(session, response)

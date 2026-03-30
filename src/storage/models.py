@@ -73,13 +73,19 @@ class SessionModel:
     total_turns: int = 0
     message_count: int = 0
     is_active: bool = True
+    # In-flight tracking (migration 5)
+    chat_id: Optional[int] = None
+    message_thread_id: Optional[int] = None
+    in_flight: bool = False
+    in_flight_prompt: Optional[str] = None
+    in_flight_started_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         data = asdict(self)
         # Convert datetime to ISO format
-        for key in ["created_at", "last_used"]:
-            if data[key]:
+        for key in ["created_at", "last_used", "in_flight_started_at"]:
+            if data.get(key):
                 data[key] = data[key].isoformat()
         return data
 
@@ -89,8 +95,9 @@ class SessionModel:
         data = dict(row)
 
         # Parse datetime fields
-        for field in ["created_at", "last_used"]:
-            data[field] = _parse_datetime(data.get(field))
+        for dt_field in ["created_at", "last_used", "in_flight_started_at"]:
+            if dt_field in data:
+                data[dt_field] = _parse_datetime(data.get(dt_field))
 
         return cls(**data)
 

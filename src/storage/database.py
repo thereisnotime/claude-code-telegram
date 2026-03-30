@@ -310,6 +310,19 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- In-flight tracking for self-modification resilience.
+                -- Allows the bot to detect and auto-resume sessions that were
+                -- interrupted mid-execution (e.g. by a watchfiles restart).
+                ALTER TABLE sessions ADD COLUMN chat_id INTEGER;
+                ALTER TABLE sessions ADD COLUMN message_thread_id INTEGER;
+                ALTER TABLE sessions ADD COLUMN in_flight BOOLEAN DEFAULT FALSE;
+                ALTER TABLE sessions ADD COLUMN in_flight_prompt TEXT;
+                ALTER TABLE sessions ADD COLUMN in_flight_started_at TIMESTAMP;
+                """,
+            ),
         ]
 
     async def _init_pool(self):

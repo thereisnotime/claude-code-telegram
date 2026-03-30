@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -38,6 +38,8 @@ class ClaudeSession:
     message_count: int = 0
     tools_used: List[str] = field(default_factory=list)
     is_new_session: bool = False  # True if session hasn't been sent to Claude Code yet
+    chat_id: Optional[int] = None
+    message_thread_id: Optional[int] = None
 
     def is_expired(self, timeout_hours: int) -> bool:
         """Check if session has expired."""
@@ -111,6 +113,24 @@ class SessionStorage:
 
     async def get_all_sessions(self) -> List[ClaudeSession]:
         """Get all sessions."""
+        raise NotImplementedError
+
+    async def mark_in_flight(
+        self,
+        session_id: str,
+        chat_id: int,
+        message_thread_id: Optional[int],
+        prompt: str,
+    ) -> None:
+        """Mark a session as having an active in-flight request."""
+        raise NotImplementedError
+
+    async def clear_in_flight(self, session_id: str) -> None:
+        """Clear the in-flight flag after execution completes."""
+        raise NotImplementedError
+
+    async def get_interrupted_sessions(self) -> List[Dict[str, Any]]:
+        """Get all sessions that were interrupted mid-flight."""
         raise NotImplementedError
 
 

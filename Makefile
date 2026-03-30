@@ -50,7 +50,10 @@ clean:
 run:
 	poetry run claude-telegram-bot
 
-run-watch:  ## Run the bot with auto-restart on src/ changes (uses watchfiles)
+run-watch:  ## Run the bot with auto-restart on src/ changes (validated, debounced)
+	poetry run python scripts/safe_watch.py
+
+run-watch-raw:  ## Run with raw watchfiles (no validation/debounce)
 	poetry run watchfiles "claude-telegram-bot" src/
 
 # For debugging

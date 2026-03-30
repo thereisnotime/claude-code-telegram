@@ -212,6 +212,147 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     }
 
 
+async def _resume_interrupted_sessions(
+    claude_integration: ClaudeIntegration,
+    telegram_bot: Any,
+    config: Settings,
+    delay_seconds: float = 5.0,
+) -> None:
+    """Detect and resume sessions that were interrupted by a restart.
+
+    Waits briefly for the bot to fully initialize, then checks for any
+    sessions that had in_flight=TRUE when the process last died.
+    """
+    _logger = structlog.get_logger()
+
+    await asyncio.sleep(delay_seconds)
+
+    storage = claude_integration.session_manager.storage
+    if not hasattr(storage, "get_interrupted_sessions"):
+        return
+
+    try:
+        interrupted = await storage.get_interrupted_sessions()
+    except Exception as e:
+        _logger.warning("Could not query interrupted sessions", error=str(e))
+        return
+
+    if not interrupted:
+        return
+
+    _logger.info("Found interrupted sessions to resume", count=len(interrupted))
+
+    from datetime import UTC, datetime, timedelta
+
+    for session_info in interrupted:
+        session_id = session_info["session_id"]
+        chat_id = session_info.get("chat_id")
+        message_thread_id = session_info.get("message_thread_id")
+        user_id = session_info["user_id"]
+        original_prompt = session_info.get("in_flight_prompt") or ""
+        working_dir = session_info.get("project_path", config.approved_directory)
+        started_at = session_info.get("in_flight_started_at")
+
+        # Skip stale sessions
+        if started_at and isinstance(started_at, datetime):
+            age = datetime.now(UTC) - started_at
+            if age > timedelta(hours=config.session_timeout_hours):
+                _logger.info(
+                    "Skipping stale interrupted session",
+                    session_id=session_id,
+                    age_hours=age.total_seconds() / 3600,
+                )
+                await storage.clear_in_flight(session_id)
+                continue
+
+        if not chat_id:
+            _logger.warning(
+                "No chat_id for interrupted session, skipping",
+                session_id=session_id,
+            )
+            await storage.clear_in_flight(session_id)
+            continue
+
+        # Notify user
+        try:
+            await telegram_bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=message_thread_id,
+                text="Bot restarted during your request. Resuming...",
+            )
+        except Exception as e:
+            _logger.warning(
+                "Failed to notify user of resume",
+                chat_id=chat_id,
+                error=str(e),
+            )
+            await storage.clear_in_flight(session_id)
+            continue
+
+        # Resume the Claude session
+        resume_prompt = (
+            "You were interrupted by a bot process restart mid-execution. "
+            f"The user's original request was: {original_prompt}\n\n"
+            "Continue where you left off. If you were writing code, "
+            "verify the current state of the files and complete any unfinished work."
+        )
+
+        try:
+            response = await claude_integration.run_command(
+                prompt=resume_prompt,
+                working_directory=Path(working_dir),
+                user_id=user_id,
+                session_id=session_id,
+                chat_id=chat_id,
+                message_thread_id=message_thread_id,
+            )
+
+            # Send response back to the chat
+            from src.bot.utils.formatting import ResponseFormatter
+
+            formatter = ResponseFormatter(config)
+            for msg in formatter.format_claude_response(response.content or ""):
+                try:
+                    await telegram_bot.send_message(
+                        chat_id=chat_id,
+                        message_thread_id=message_thread_id,
+                        text=msg.text,
+                        parse_mode=msg.parse_mode,
+                    )
+                except Exception:
+                    # If HTML parse fails, send as plain text
+                    await telegram_bot.send_message(
+                        chat_id=chat_id,
+                        message_thread_id=message_thread_id,
+                        text=msg.text,
+                    )
+
+        except Exception as e:
+            _logger.error(
+                "Failed to resume session",
+                session_id=session_id,
+                error=str(e),
+            )
+            try:
+                await telegram_bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=message_thread_id,
+                    text=(
+                        "Could not auto-resume the previous session. "
+                        "Please send your request again."
+                    ),
+                )
+            except Exception:
+                pass
+        finally:
+            try:
+                await storage.clear_in_flight(session_id)
+            except Exception:
+                pass
+
+    _logger.info("Interrupted session resume complete")
+
+
 async def run_application(app: Dict[str, Any]) -> None:
     """Run the application with graceful shutdown handling."""
     logger = structlog.get_logger()
@@ -323,6 +464,17 @@ async def run_application(app: Dict[str, Any]) -> None:
             )
             await scheduler.start()
             logger.info("Job scheduler enabled")
+
+        # Auto-resume sessions interrupted by a restart (runs in background)
+        resume_task = asyncio.create_task(
+            _resume_interrupted_sessions(
+                claude_integration=claude_integration,
+                telegram_bot=telegram_bot,
+                config=config,
+                delay_seconds=5.0,
+            )
+        )
+        tasks.append(resume_task)
 
         # Shutdown task
         shutdown_task = asyncio.create_task(shutdown_event.wait())

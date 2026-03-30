@@ -19,13 +19,17 @@ run *args='':
 run-env +files:
     poetry run claude-telegram-bot {{ prepend('--env-file ', files) }}
 
-# Run the bot with auto-restart on src/ changes
+# Run the bot with auto-restart on src/ changes (validated, debounced)
 run-watch *args='':
-    poetry run watchfiles "claude-telegram-bot {{ args }}" src/
+    poetry run python scripts/safe_watch.py {{ args }}
 
-# Run the bot with auto-restart and additional .env files (e.g. just run-watch-env .env.local .env.secrets)
+# Run the bot with auto-restart and additional .env files
 run-watch-env +files:
-    poetry run watchfiles "claude-telegram-bot {{ prepend('--env-file ', files) }}" src/
+    poetry run python scripts/safe_watch.py {{ prepend('--env-file ', files) }}
+
+# Run with raw watchfiles (no validation/debounce)
+run-watch-raw *args='':
+    poetry run watchfiles "claude-telegram-bot {{ args }}" src/
 
 # Run the bot with debug logging
 run-debug:

@@ -5,7 +5,7 @@ Replaces the in-memory session storage with SQLite persistence.
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -80,7 +80,9 @@ class SQLiteSessionStorage(SessionStorage):
             cursor = await conn.execute(
                 """
                 UPDATE sessions
-                SET last_used = ?, total_cost = ?, total_turns = ?, message_count = ?
+                SET last_used = ?, total_cost = ?, total_turns = ?,
+                    message_count = ?, chat_id = COALESCE(?, chat_id),
+                    message_thread_id = COALESCE(?, message_thread_id)
                 WHERE session_id = ?
             """,
                 (
@@ -88,6 +90,8 @@ class SQLiteSessionStorage(SessionStorage):
                     session_model.total_cost,
                     session_model.total_turns,
                     session_model.message_count,
+                    session.chat_id,
+                    session.message_thread_id,
                     session_model.session_id,
                 ),
             )
@@ -98,8 +102,9 @@ class SQLiteSessionStorage(SessionStorage):
                     """
                     INSERT INTO sessions
                     (session_id, user_id, project_path, created_at, last_used,
-                     total_cost, total_turns, message_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     total_cost, total_turns, message_count, chat_id,
+                     message_thread_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         session_model.session_id,
@@ -110,6 +115,8 @@ class SQLiteSessionStorage(SessionStorage):
                         session_model.total_cost,
                         session_model.total_turns,
                         session_model.message_count,
+                        session.chat_id,
+                        session.message_thread_id,
                     ),
                 )
 
@@ -137,18 +144,7 @@ class SQLiteSessionStorage(SessionStorage):
 
             session_model = SessionModel.from_row(row)
 
-            # Convert to ClaudeSession
-            claude_session = ClaudeSession(
-                session_id=session_model.session_id,
-                user_id=session_model.user_id,
-                project_path=Path(session_model.project_path),
-                created_at=session_model.created_at,
-                last_used=session_model.last_used,
-                total_cost=session_model.total_cost,
-                total_turns=session_model.total_turns,
-                message_count=session_model.message_count,
-                tools_used=[],  # Tools are tracked separately in tool_usage table
-            )
+            claude_session = self._model_to_session(session_model)
 
             logger.debug(
                 "Session loaded from database",
@@ -169,6 +165,23 @@ class SQLiteSessionStorage(SessionStorage):
 
         logger.debug("Session marked as inactive", session_id=session_id)
 
+    @staticmethod
+    def _model_to_session(model: SessionModel) -> ClaudeSession:
+        """Convert a SessionModel to a ClaudeSession."""
+        return ClaudeSession(
+            session_id=model.session_id,
+            user_id=model.user_id,
+            project_path=Path(model.project_path),
+            created_at=model.created_at,
+            last_used=model.last_used,
+            total_cost=model.total_cost,
+            total_turns=model.total_turns,
+            message_count=model.message_count,
+            tools_used=[],  # Tools are tracked separately in tool_usage table
+            chat_id=model.chat_id,
+            message_thread_id=model.message_thread_id,
+        )
+
     async def get_user_sessions(self, user_id: int) -> List[ClaudeSession]:
         """Get all active sessions for a user."""
         async with self.db_manager.get_connection() as conn:
@@ -181,24 +194,7 @@ class SQLiteSessionStorage(SessionStorage):
                 (user_id,),
             )
             rows = await cursor.fetchall()
-
-            sessions = []
-            for row in rows:
-                session_model = SessionModel.from_row(row)
-                claude_session = ClaudeSession(
-                    session_id=session_model.session_id,
-                    user_id=session_model.user_id,
-                    project_path=Path(session_model.project_path),
-                    created_at=session_model.created_at,
-                    last_used=session_model.last_used,
-                    total_cost=session_model.total_cost,
-                    total_turns=session_model.total_turns,
-                    message_count=session_model.message_count,
-                    tools_used=[],  # Tools are tracked separately
-                )
-                sessions.append(claude_session)
-
-            return sessions
+            return [self._model_to_session(SessionModel.from_row(row)) for row in rows]
 
     async def get_all_sessions(self) -> List[ClaudeSession]:
         """Get all active sessions."""
@@ -207,24 +203,65 @@ class SQLiteSessionStorage(SessionStorage):
                 "SELECT * FROM sessions WHERE is_active = TRUE ORDER BY last_used DESC"
             )
             rows = await cursor.fetchall()
+            return [self._model_to_session(SessionModel.from_row(row)) for row in rows]
 
-            sessions = []
-            for row in rows:
-                session_model = SessionModel.from_row(row)
-                claude_session = ClaudeSession(
-                    session_id=session_model.session_id,
-                    user_id=session_model.user_id,
-                    project_path=Path(session_model.project_path),
-                    created_at=session_model.created_at,
-                    last_used=session_model.last_used,
-                    total_cost=session_model.total_cost,
-                    total_turns=session_model.total_turns,
-                    message_count=session_model.message_count,
-                    tools_used=[],  # Tools are tracked separately
-                )
-                sessions.append(claude_session)
+    async def mark_in_flight(
+        self,
+        session_id: str,
+        chat_id: int,
+        message_thread_id: Optional[int],
+        prompt: str,
+    ) -> None:
+        """Mark a session as having an active in-flight request."""
+        async with self.db_manager.get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE sessions
+                SET in_flight = TRUE, chat_id = ?, message_thread_id = ?,
+                    in_flight_prompt = ?, in_flight_started_at = ?
+                WHERE session_id = ?
+            """,
+                (
+                    chat_id,
+                    message_thread_id,
+                    prompt[:500],  # Truncate to avoid bloating DB
+                    datetime.now(UTC),
+                    session_id,
+                ),
+            )
+            await conn.commit()
 
-            return sessions
+        logger.debug("Session marked in-flight", session_id=session_id)
+
+    async def clear_in_flight(self, session_id: str) -> None:
+        """Clear the in-flight flag after execution completes."""
+        async with self.db_manager.get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE sessions
+                SET in_flight = FALSE, in_flight_prompt = NULL,
+                    in_flight_started_at = NULL
+                WHERE session_id = ?
+            """,
+                (session_id,),
+            )
+            await conn.commit()
+
+        logger.debug("Session in-flight cleared", session_id=session_id)
+
+    async def get_interrupted_sessions(self) -> List[Dict[str, Any]]:
+        """Get all sessions that were interrupted mid-flight."""
+        async with self.db_manager.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT session_id, user_id, chat_id, message_thread_id,
+                       project_path, in_flight_prompt, in_flight_started_at
+                FROM sessions
+                WHERE in_flight = TRUE AND is_active = TRUE
+            """
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     async def cleanup_expired_sessions(self, timeout_hours: int) -> int:
         """Mark expired sessions as inactive."""

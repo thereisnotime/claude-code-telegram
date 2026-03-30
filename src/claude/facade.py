@@ -103,6 +103,10 @@ class ClaudeIntegration:
                 except Exception as e:
                     logger.debug("Failed to mark in-flight", error=str(e))
 
+            # Track whether execution completed (success or handled error).
+            # If cancelled (SIGTERM/shutdown), leave in-flight flag so
+            # auto-resume picks it up on next startup.
+            execution_completed = False
             try:
                 response = await self._execute(
                     prompt=prompt,
@@ -112,6 +116,7 @@ class ClaudeIntegration:
                     stream_callback=on_stream,
                     interrupt_event=interrupt_event,
                 )
+                execution_completed = True
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
                 # retry as a fresh session.  The CLI returns a generic exit-code-1
@@ -143,11 +148,15 @@ class ClaudeIntegration:
                         stream_callback=on_stream,
                         interrupt_event=interrupt_event,
                     )
+                    execution_completed = True
                 else:
+                    execution_completed = True
                     raise
             finally:
-                # Clear in-flight flag regardless of success/failure
-                if marked_in_flight and self.session_manager:
+                # Only clear in-flight if execution completed normally.
+                # On CancelledError (shutdown/SIGTERM), the flag stays set
+                # so _resume_interrupted_sessions() can pick it up.
+                if marked_in_flight and execution_completed and self.session_manager:
                     try:
                         await self.session_manager.storage.clear_in_flight(
                             session.session_id

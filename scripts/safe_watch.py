@@ -79,6 +79,7 @@ class SafeWatcher:
         self.restart_times: list[float] = []
         self._shutting_down = False
         self._started_at: float = 0.0  # timestamp of last bot start
+        self._lock_path = PROJECT_ROOT / ".safe_watch_lock"
 
     def start_bot(self) -> subprocess.Popen:
         """Start the bot as a subprocess."""
@@ -276,6 +277,16 @@ class SafeWatcher:
                 "Ignoring changes during startup grace period (%.0fs / %.0fs)",
                 age,
                 grace,
+            )
+            return
+
+        # Lock file: the bot writes .safe_watch_lock while Claude is
+        # executing. Skip restarts while it exists — the bot is making
+        # these changes itself as part of its work.
+        if self._lock_path.exists():
+            log.info(
+                "Lock file present (%s) — bot is mid-execution, skipping restart",
+                self._lock_path.name,
             )
             return
 

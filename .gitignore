@@ -147,3 +147,5 @@ sessions/
 backups/
 uploads/
 config/mcp.json
+# Safe watch lock file
+.safe_watch_lock

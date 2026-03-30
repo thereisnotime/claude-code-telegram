@@ -4,6 +4,7 @@ Provides simple interface for bot handlers.
 """
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -103,6 +104,14 @@ class ClaudeIntegration:
                 except Exception as e:
                     logger.debug("Failed to mark in-flight", error=str(e))
 
+            # Lock file: tell safe_watch not to restart while Claude is executing.
+            # The lock is removed when execution completes or the process dies.
+            lock_path = working_directory / ".safe_watch_lock"
+            try:
+                lock_path.write_text(str(os.getpid()))
+            except Exception:
+                pass  # Non-critical — best effort
+
             # Track whether execution completed (success or handled error).
             # If cancelled (SIGTERM/shutdown), leave in-flight flag so
             # auto-resume picks it up on next startup.
@@ -163,6 +172,12 @@ class ClaudeIntegration:
                         )
                     except Exception as e:
                         logger.debug("Failed to clear in-flight", error=str(e))
+                # Always remove lock file (even on cancellation — process is
+                # going down anyway, and a stale lock would block future restarts).
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
             # Update session (assigns real session_id for new sessions)
             await self.session_manager.update_session(session, response)

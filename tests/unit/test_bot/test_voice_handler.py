@@ -1,8 +1,9 @@
 """Tests for voice handler feature."""
 
-import asyncio
+import asyncio  # noqa: F401 – used in patch() target strings
 import sys
 from datetime import timedelta
+from pathlib import Path  # noqa: F401 – used in patch() target strings
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 

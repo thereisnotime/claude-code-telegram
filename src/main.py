@@ -471,8 +471,9 @@ async def run_application(app: Dict[str, Any]) -> None:
             await scheduler.start()
             logger.info("Job scheduler enabled")
 
-        # Auto-resume sessions interrupted by a restart (runs in background)
-        resume_task = asyncio.create_task(
+        # Auto-resume sessions interrupted by a restart (fire-and-forget,
+        # NOT added to tasks — completing this must not trigger shutdown).
+        asyncio.create_task(
             _resume_interrupted_sessions(
                 claude_integration=claude_integration,
                 telegram_bot=telegram_bot,
@@ -480,7 +481,6 @@ async def run_application(app: Dict[str, Any]) -> None:
                 delay_seconds=5.0,
             )
         )
-        tasks.append(resume_task)
 
         # Shutdown task
         shutdown_task = asyncio.create_task(shutdown_event.wait())

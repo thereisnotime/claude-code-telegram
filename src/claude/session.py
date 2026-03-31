@@ -1,5 +1,6 @@
 """Claude Code session management."""
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -142,6 +143,7 @@ class SessionManager:
         self.config = config
         self.storage = storage
         self.active_sessions: Dict[str, ClaudeSession] = {}
+        self._session_lock = asyncio.Lock()
 
     async def get_or_create_session(
         self,
@@ -157,51 +159,53 @@ class SessionManager:
             session_id=session_id,
         )
 
-        # Check for existing session
-        if session_id and session_id in self.active_sessions:
-            session = self.active_sessions[session_id]
-            if session.user_id != user_id:
-                logger.warning(
-                    "Session ownership mismatch in active cache",
-                    session_id=session_id,
-                    session_owner=session.user_id,
-                    requesting_user=user_id,
+        async with self._session_lock:
+            # Check for existing session
+            if session_id and session_id in self.active_sessions:
+                session = self.active_sessions[session_id]
+                if session.user_id != user_id:
+                    logger.warning(
+                        "Session ownership mismatch in active cache",
+                        session_id=session_id,
+                        session_owner=session.user_id,
+                        requesting_user=user_id,
+                    )
+                elif not session.is_expired(self.config.session_timeout_hours):
+                    logger.debug("Using active session", session_id=session_id)
+                    return session
+
+            # Try to load from storage (filtered by user_id)
+            if session_id:
+                loaded_session = await self.storage.load_session(session_id, user_id)
+                if loaded_session and not loaded_session.is_expired(
+                    self.config.session_timeout_hours
+                ):
+                    self.active_sessions[session_id] = loaded_session
+                    logger.info("Loaded session from storage", session_id=session_id)
+                    return loaded_session
+
+            # Check user session limit
+            user_sessions = await self._get_user_sessions(user_id)
+            if len(user_sessions) >= self.config.max_sessions_per_user:
+                # Remove oldest session
+                oldest = min(user_sessions, key=lambda s: s.last_used)
+                self._remove_session_unlocked(oldest.session_id)
+                await self.storage.delete_session(oldest.session_id)
+                logger.info(
+                    "Removed oldest session due to limit",
+                    removed_session_id=oldest.session_id,
+                    user_id=user_id,
                 )
-            elif not session.is_expired(self.config.session_timeout_hours):
-                logger.debug("Using active session", session_id=session_id)
-                return session
 
-        # Try to load from storage (filtered by user_id)
-        if session_id:
-            loaded_session = await self.storage.load_session(session_id, user_id)
-            if loaded_session and not loaded_session.is_expired(
-                self.config.session_timeout_hours
-            ):
-                self.active_sessions[session_id] = loaded_session
-                logger.info("Loaded session from storage", session_id=session_id)
-                return loaded_session
-
-        # Check user session limit
-        user_sessions = await self._get_user_sessions(user_id)
-        if len(user_sessions) >= self.config.max_sessions_per_user:
-            # Remove oldest session
-            oldest = min(user_sessions, key=lambda s: s.last_used)
-            await self.remove_session(oldest.session_id)
-            logger.info(
-                "Removed oldest session due to limit",
-                removed_session_id=oldest.session_id,
+            # Create session with empty ID — Claude will provide the real one
+            new_session = ClaudeSession(
+                session_id="",
                 user_id=user_id,
+                project_path=project_path,
+                created_at=datetime.now(UTC),
+                last_used=datetime.now(UTC),
+                is_new_session=True,
             )
-
-        # Create session with empty ID — Claude will provide the real one
-        new_session = ClaudeSession(
-            session_id="",
-            user_id=user_id,
-            project_path=project_path,
-            created_at=datetime.now(UTC),
-            last_used=datetime.now(UTC),
-            is_new_session=True,
-        )
 
         # Don't save to storage yet — deferred until after Claude responds
         # with a real session_id (via update_session)
@@ -218,30 +222,31 @@ class SessionManager:
         self, session: ClaudeSession, response: ClaudeResponse
     ) -> None:
         """Update session with response data and persist."""
-        if session.is_new_session:
-            # Assign the real session ID from Claude
-            if response.session_id:
-                session.session_id = response.session_id
-            else:
-                logger.warning(
-                    "Claude returned no session_id for new session; "
-                    "session will not be resumable",
-                    user_id=session.user_id,
-                    project_path=str(session.project_path),
+        async with self._session_lock:
+            if session.is_new_session:
+                # Assign the real session ID from Claude
+                if response.session_id:
+                    session.session_id = response.session_id
+                else:
+                    logger.warning(
+                        "Claude returned no session_id for new session; "
+                        "session will not be resumable",
+                        user_id=session.user_id,
+                        project_path=str(session.project_path),
+                    )
+                session.is_new_session = False
+
+                logger.info(
+                    "New session assigned Claude session ID",
+                    session_id=session.session_id,
                 )
-            session.is_new_session = False
 
-            logger.info(
-                "New session assigned Claude session ID",
-                session_id=session.session_id,
-            )
+            session.update_usage(response)
 
-        session.update_usage(response)
-
-        # Persist to storage and track as active
-        if session.session_id:
-            self.active_sessions[session.session_id] = session
-            await self.storage.save_session(session)
+            # Persist to storage and track as active
+            if session.session_id:
+                self.active_sessions[session.session_id] = session
+                await self.storage.save_session(session)
 
         logger.debug(
             "Session updated",
@@ -252,11 +257,16 @@ class SessionManager:
 
     async def remove_session(self, session_id: str) -> None:
         """Remove session."""
-        if session_id in self.active_sessions:
-            del self.active_sessions[session_id]
+        async with self._session_lock:
+            self._remove_session_unlocked(session_id)
 
         await self.storage.delete_session(session_id)
         logger.info("Session removed", session_id=session_id)
+
+    def _remove_session_unlocked(self, session_id: str) -> None:
+        """Remove session from active cache (caller must hold _session_lock)."""
+        if session_id in self.active_sessions:
+            del self.active_sessions[session_id]
 
     async def cleanup_expired_sessions(self) -> int:
         """Remove expired sessions."""

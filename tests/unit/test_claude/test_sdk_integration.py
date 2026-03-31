@@ -1099,4 +1099,4 @@ class TestClaudeMdLoading:
             await sdk_manager.execute_command(prompt="test", working_directory=tmp_path)
 
         opts = captured[0]
-        assert opts.setting_sources == ["project"]
+        assert opts.setting_sources == ["project", "user"]

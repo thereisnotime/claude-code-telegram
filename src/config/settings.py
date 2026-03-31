@@ -158,6 +158,12 @@ class Settings(BaseSettings):
     max_sessions_per_user: int = Field(
         DEFAULT_MAX_SESSIONS_PER_USER, description="Max concurrent sessions"
     )
+    db_pool_size: int = Field(
+        5,
+        description="SQLite connection pool size",
+        ge=1,
+        le=50,
+    )
 
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
@@ -491,6 +497,24 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "projects_config_path required when enable_project_threads is True"
                 )
+
+        # Sanity: max_concurrent_sdk should be >= 2 when threads are parallel
+        if self.enable_project_threads and self.max_concurrent_sdk < 2:
+            raise ValueError(
+                "max_concurrent_sdk must be >= 2 when enable_project_threads "
+                "is True (set to 1 effectively disables parallelism)"
+            )
+
+        # Sanity: db_pool_size should accommodate concurrent SDK sessions
+        if self.enable_project_threads and self.db_pool_size < self.max_concurrent_sdk:
+            import structlog as _sl
+
+            _sl.get_logger().warning(
+                "db_pool_size < max_concurrent_sdk; consider increasing "
+                "DB_POOL_SIZE to avoid connection contention",
+                db_pool_size=self.db_pool_size,
+                max_concurrent_sdk=self.max_concurrent_sdk,
+            )
 
         return self
 

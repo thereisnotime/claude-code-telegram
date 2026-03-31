@@ -137,11 +137,11 @@ CREATE INDEX idx_cost_tracking_user_date ON cost_tracking(user_id, date);
 class DatabaseManager:
     """Manage database connections and initialization."""
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, pool_size: int = 5):
         """Initialize database manager."""
         self.database_path = self._parse_database_url(database_url)
         self._connection_pool: list[aiosqlite.Connection] = []
-        self._pool_size = 5
+        self._pool_size = max(1, pool_size)
         self._pool_lock = asyncio.Lock()
 
     def _parse_database_url(self, database_url: str) -> Path:

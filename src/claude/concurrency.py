@@ -95,6 +95,9 @@ class RAMGatedExecutor:
 
         Returns whatever the coroutine returns.
         """
+        # Housekeeping: clear finished tasks before checking
+        self._sweep_done()
+
         # Per-key serialisation: if key is already running, wait for it.
         async with self._lock:
             existing = self._active.get(key)

@@ -1006,6 +1006,9 @@ class MessageOrchestrator:
         """
         need_mcp_intercept = mcp_images is not None and approved_directory is not None
         can_send_interactive = bot is not None and chat_id is not None
+        # Track whether any interactive tool messages were sent so callers
+        # can add a brief delay before the final response (ordering fix).
+        interactive_sent: List[bool] = []
 
         if (
             verbose_level == 0
@@ -1058,10 +1061,12 @@ class MessageOrchestrator:
                                     parse_mode="HTML",
                                     message_thread_id=message_thread_id,
                                 )
-                            except Exception:
-                                logger.debug(
+                                interactive_sent.append(True)
+                            except Exception as itm_err:
+                                logger.warning(
                                     "Failed to send interactive tool msg",
                                     tool=tc_name,
+                                    error=str(itm_err),
                                 )
 
             # Capture tool calls
@@ -1116,6 +1121,7 @@ class MessageOrchestrator:
                     except Exception:
                         pass
 
+        _on_stream.interactive_sent = interactive_sent  # type: ignore[attr-defined]
         return _on_stream
 
     async def _send_images(
@@ -1263,22 +1269,22 @@ class MessageOrchestrator:
             "Working...", reply_markup=stop_kb
         )
 
-        # Register active request for stop callback
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await progress_msg.edit_text(
+                "Claude integration not available. Check configuration.",
+                reply_markup=None,
+            )
+            return
+
+        # Register active request for stop callback — placed immediately
+        # before the try/finally that pops it, so it never leaks.
         active_request = ActiveRequest(
             user_id=user_id,
             interrupt_event=interrupt_event,
             progress_msg=progress_msg,
         )
         self._active_requests[req_key] = active_request
-
-        claude_integration = context.bot_data.get("claude_integration")
-        if not claude_integration:
-            self._active_requests.pop(req_key, None)
-            await progress_msg.edit_text(
-                "Claude integration not available. Check configuration.",
-                reply_markup=None,
-            )
-            return
 
         # Read current_directory and session_id from the thread-safe
         # _thread_context when running under project threads, falling
@@ -1365,18 +1371,17 @@ class MessageOrchestrator:
             else:
                 context.user_data["claude_session_id"] = claude_response.session_id
 
-            # Track directory changes
+            # Track directory changes — write directly to thread_ctx when
+            # in project-thread mode so the value doesn't race via user_data.
             from .handlers.message import _update_working_directory_from_claude_response
 
             _update_working_directory_from_claude_response(
-                claude_response, context, self.settings, user_id
+                claude_response,
+                context,
+                self.settings,
+                user_id,
+                target=thread_ctx,
             )
-
-            # If thread mode, copy any directory update into _thread_context
-            if thread_ctx:
-                thread_ctx["current_directory"] = context.user_data.get(
-                    "current_directory", thread_ctx.get("current_directory")
-                )
 
             # Store interaction
             storage = context.bot_data.get("storage")
@@ -1422,6 +1427,11 @@ class MessageOrchestrator:
                     await draft_streamer.flush()
                 except Exception:
                     logger.debug("Draft flush failed in finally block", user_id=user_id)
+
+        # Brief pause so interactive tool messages (plan/todo/question)
+        # arrive before the final response in Telegram clients.
+        if on_stream and getattr(on_stream, "interactive_sent", None):
+            await asyncio.sleep(0.3)
 
         try:
             await progress_msg.delete()
@@ -1587,10 +1597,18 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
+        # Thread-safe context reads (same pattern as agentic_text)
+        thread_ctx = context.user_data.get("_thread_context")
+        if thread_ctx:
+            current_dir = thread_ctx.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = thread_ctx.get("claude_session_id")
+        else:
+            current_dir = context.user_data.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = context.user_data.get("claude_session_id")
 
         # Check if /new was used — skip auto-resume for this first message.
         # Flag is only cleared after a successful run so retries keep the intent.
@@ -1622,12 +1640,20 @@ class MessageOrchestrator:
             if force_new:
                 context.user_data["force_new_session"] = False
 
-            context.user_data["claude_session_id"] = claude_response.session_id
+            # Thread-safe context writes
+            if thread_ctx:
+                thread_ctx["claude_session_id"] = claude_response.session_id
+            else:
+                context.user_data["claude_session_id"] = claude_response.session_id
 
             from .handlers.message import _update_working_directory_from_claude_response
 
             _update_working_directory_from_claude_response(
-                claude_response, context, self.settings, user_id
+                claude_response,
+                context,
+                self.settings,
+                user_id,
+                target=thread_ctx,
             )
 
             from .utils.formatting import ResponseFormatter
@@ -1795,10 +1821,18 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
+        # Thread-safe context reads (same pattern as agentic_text)
+        thread_ctx = context.user_data.get("_thread_context")
+        if thread_ctx:
+            current_dir = thread_ctx.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = thread_ctx.get("claude_session_id")
+        else:
+            current_dir = context.user_data.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = context.user_data.get("claude_session_id")
         force_new = bool(context.user_data.get("force_new_session"))
 
         verbose_level = self._get_verbose_level(context)
@@ -1829,12 +1863,20 @@ class MessageOrchestrator:
         if force_new:
             context.user_data["force_new_session"] = False
 
-        context.user_data["claude_session_id"] = claude_response.session_id
+        # Thread-safe context writes
+        if thread_ctx:
+            thread_ctx["claude_session_id"] = claude_response.session_id
+        else:
+            context.user_data["claude_session_id"] = claude_response.session_id
 
         from .handlers.message import _update_working_directory_from_claude_response
 
         _update_working_directory_from_claude_response(
-            claude_response, context, self.settings, user_id
+            claude_response,
+            context,
+            self.settings,
+            user_id,
+            target=thread_ctx,
         )
 
         from .utils.formatting import ResponseFormatter

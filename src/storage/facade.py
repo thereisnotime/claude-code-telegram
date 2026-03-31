@@ -34,9 +34,9 @@ logger = structlog.get_logger()
 class Storage:
     """Main storage interface."""
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, pool_size: int = 5):
         """Initialize storage with database URL."""
-        self.db_manager = DatabaseManager(database_url)
+        self.db_manager = DatabaseManager(database_url, pool_size=pool_size)
         self.users = UserRepository(self.db_manager)
         self.sessions = SessionRepository(self.db_manager)
         self.project_threads = ProjectThreadRepository(self.db_manager)

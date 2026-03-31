@@ -109,7 +109,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     features = FeatureFlags(config)
 
     # Initialize storage system
-    storage = Storage(config.database_url)
+    storage = Storage(config.database_url, pool_size=config.db_pool_size)
     await storage.initialize()
 
     # Create security components

@@ -1,7 +1,7 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import structlog
 from telegram import InputMediaPhoto, Update
@@ -1258,8 +1258,19 @@ def _update_working_directory_from_claude_response(
     context: ContextTypes.DEFAULT_TYPE,
     settings: Settings,
     user_id: int,
+    *,
+    target: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Update the working directory based on Claude's response content."""
+    """Update the working directory based on Claude's response content.
+
+    Parameters
+    ----------
+    target:
+        Dict to write ``current_directory`` into.  When *None* (default),
+        ``context.user_data`` is used — which is fine for single-thread
+        mode.  Callers running inside a project-thread context should pass
+        ``_thread_context`` so the write goes to the isolated dict.
+    """
     import re
     from pathlib import Path
 
@@ -1274,10 +1285,10 @@ def _update_working_directory_from_claude_response(
 
     if context.user_data is None:
         return
+
+    dest = target if target is not None else context.user_data
     content = claude_response.content.lower()
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    current_dir = dest.get("current_directory", settings.approved_directory)
 
     for pattern in patterns:
         matches = re.findall(pattern, content, re.MULTILINE | re.IGNORECASE)
@@ -1301,7 +1312,7 @@ def _update_working_directory_from_claude_response(
                     new_path.is_relative_to(settings.approved_directory)
                     and new_path.exists()
                 ):
-                    context.user_data["current_directory"] = new_path
+                    dest["current_directory"] = new_path
                     logger.info(
                         "Updated working directory from Claude response",
                         old_dir=str(current_dir),

@@ -56,6 +56,7 @@ class RAMGatedExecutor:
     @property
     def active_count(self) -> int:
         """Number of currently running SDK tasks."""
+        self._sweep_done()
         return len(self._active)
 
     @property
@@ -169,6 +170,16 @@ class RAMGatedExecutor:
                 ram_pct=psutil.virtual_memory().percent,
             )
 
+    def _sweep_done(self) -> None:
+        """Remove entries whose tasks have already completed.
+
+        Called lazily from ``active_count`` so the dict doesn't
+        accumulate stale references over time.
+        """
+        stale = [k for k, t in self._active.items() if t.done()]
+        for k in stale:
+            self._active.pop(k, None)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -186,6 +197,7 @@ class RAMGatedExecutor:
 
     def status(self) -> Dict[str, Any]:
         """Return a snapshot dict for /status commands."""
+        self._sweep_done()
         mem = psutil.virtual_memory()
         return {
             "active_tasks": self.active_count,

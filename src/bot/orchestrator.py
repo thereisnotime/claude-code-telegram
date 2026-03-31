@@ -29,6 +29,7 @@ from telegram.ext import (
     filters,
 )
 
+from ..claude.concurrency import RAMGatedExecutor
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
@@ -113,12 +114,69 @@ _TOOL_ICONS: Dict[str, str] = {
     "NotebookEdit": "\U0001f4d3",
     "TodoRead": "\u2611\ufe0f",
     "TodoWrite": "\u2611\ufe0f",
+    "AskUserQuestion": "\U0001f914",
+    "EnterPlanMode": "\U0001f4cb",
+    "ExitPlanMode": "\u2705",
+    "Skill": "\u2699\ufe0f",
 }
 
 
 def _tool_icon(name: str) -> str:
     """Return emoji for a tool, with a default wrench."""
     return _TOOL_ICONS.get(name, "\U0001f527")
+
+
+# ── Interactive tool call formatting (surface AskUserQuestion etc.) ──
+
+_INTERACTIVE_TOOLS = frozenset(
+    {"AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "TodoWrite"}
+)
+
+
+def _format_interactive_tool(name: str, tool_input: Dict[str, Any]) -> Optional[str]:
+    """Format an interactive tool call as an informational Telegram message.
+
+    Returns HTML-formatted text, or None if the tool isn't interactive.
+    """
+    if name == "AskUserQuestion":
+        questions = tool_input.get("questions", [])
+        if not questions:
+            return None
+        lines: List[str] = ["\U0001f914 <b>Claude is asking:</b>\n"]
+        for q in questions:
+            lines.append(f"<b>{escape_html(q.get('question', ''))}</b>")
+            for opt in q.get("options", []):
+                label = escape_html(opt.get("label", ""))
+                desc = escape_html(opt.get("description", ""))
+                lines.append(f"  \u2022 {label} \u2014 {desc}")
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    if name == "EnterPlanMode":
+        return (
+            "\U0001f4cb <b>Claude entered plan mode</b> \u2014 "
+            "exploring codebase and designing approach\u2026"
+        )
+
+    if name == "ExitPlanMode":
+        return "\u2705 <b>Plan complete</b> \u2014 Claude is ready to implement."
+
+    if name == "TodoWrite":
+        todos = tool_input.get("todos", [])
+        if not todos:
+            return None
+        status_icons = {
+            "completed": "\u2705",
+            "in_progress": "\U0001f504",
+            "pending": "\u2b1c",
+        }
+        lines_td: List[str] = ["\U0001f4dd <b>Task list updated:</b>\n"]
+        for t in todos:
+            icon = status_icons.get(t.get("status", ""), "\u2b1c")
+            lines_td.append(f"{icon} {escape_html(t.get('content', ''))}")
+        return "\n".join(lines_td)
+
+    return None
 
 
 @dataclass
@@ -137,8 +195,15 @@ class MessageOrchestrator:
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
         self.deps = deps
-        self._active_requests: Dict[int, ActiveRequest] = {}
+        self._active_requests: Dict[str, ActiveRequest] = {}
         self._known_commands: frozenset[str] = frozenset()
+        # RAM-gated parallel execution for project threads
+        self._executor: Optional[RAMGatedExecutor] = None
+        if getattr(settings, "enable_project_threads", False):
+            self._executor = RAMGatedExecutor(
+                ram_threshold_pct=getattr(settings, "ram_threshold_pct", 90.0),
+                max_concurrent=getattr(settings, "max_concurrent_sdk", 5),
+            )
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
         """Wrap handler to inject dependencies into context.bot_data."""
@@ -813,6 +878,19 @@ class MessageOrchestrator:
             desc = tool_input.get("description", "")
             if desc:
                 return str(desc)[:60]
+        if tool_name == "AskUserQuestion":
+            questions = tool_input.get("questions", [])
+            if questions:
+                return str(questions[0].get("question", ""))[:60]
+            return ""
+        if tool_name == "TodoWrite":
+            todos = tool_input.get("todos", [])
+            in_prog = [t for t in todos if t.get("status") == "in_progress"]
+            if in_prog:
+                return str(in_prog[0].get("activeForm", ""))[:60]
+            return f"{len(todos)} items"
+        if tool_name in ("EnterPlanMode", "ExitPlanMode"):
+            return ""
         # Generic: show first key's value
         for v in tool_input.values():
             if isinstance(v, str) and v:
@@ -855,6 +933,9 @@ class MessageOrchestrator:
         approved_directory: Optional[Path] = None,
         draft_streamer: Optional[DraftStreamer] = None,
         interrupt_event: Optional[asyncio.Event] = None,
+        bot: Any = None,
+        chat_id: Optional[int] = None,
+        message_thread_id: Optional[int] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
@@ -866,13 +947,24 @@ class MessageOrchestrator:
         text are streamed to the user in real time via
         ``sendMessageDraft``.
 
+        When *bot*, *chat_id* are provided, interactive tool calls
+        (``AskUserQuestion``, ``EnterPlanMode``, ``ExitPlanMode``,
+        ``TodoWrite``) are surfaced as ephemeral Telegram messages so
+        the user sees what Claude is doing — closer to the CLI experience.
+
         Returns None when verbose_level is 0 **and** no MCP image
         collection or draft streaming is requested.
         Typing indicators are handled by a separate heartbeat task.
         """
         need_mcp_intercept = mcp_images is not None and approved_directory is not None
+        can_send_interactive = bot is not None and chat_id is not None
 
-        if verbose_level == 0 and not need_mcp_intercept and draft_streamer is None:
+        if (
+            verbose_level == 0
+            and not need_mcp_intercept
+            and draft_streamer is None
+            and not can_send_interactive
+        ):
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
@@ -901,6 +993,28 @@ class MessageOrchestrator:
                         )
                         if img:
                             mcp_images.append(img)
+
+            # Surface interactive tool calls (AskUserQuestion, plan mode, todos)
+            if update_obj.tool_calls and can_send_interactive:
+                for tc in update_obj.tool_calls:
+                    tc_name = tc.get("name", "")
+                    if tc_name in _INTERACTIVE_TOOLS:
+                        formatted = _format_interactive_tool(
+                            tc_name, tc.get("input", {})
+                        )
+                        if formatted:
+                            try:
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text=formatted,
+                                    parse_mode="HTML",
+                                    message_thread_id=message_thread_id,
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Failed to send interactive tool msg",
+                                    tool=tc_name,
+                                )
 
             # Capture tool calls
             if update_obj.tool_calls:
@@ -1046,6 +1160,20 @@ class MessageOrchestrator:
 
         return caption_sent
 
+    def _request_key(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
+        """Build the ``_active_requests`` key.
+
+        In project-thread mode the key includes the thread state key so
+        that different threads can run in parallel.  Otherwise it is just
+        the stringified user ID (preserving the old one-at-a-time
+        behaviour).
+        """
+        assert context.user_data is not None
+        thread_ctx = context.user_data.get("_thread_context")
+        if thread_ctx:
+            return str(thread_ctx.get("state_key", str(user_id)))
+        return str(user_id)
+
     async def agentic_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1055,11 +1183,13 @@ class MessageOrchestrator:
         assert context.user_data is not None
         user_id = update.effective_user.id
         message_text = update.message.text or ""
+        req_key = self._request_key(user_id, context)
 
         logger.info(
             "Agentic text message",
             user_id=user_id,
             message_length=len(message_text),
+            request_key=req_key,
         )
 
         # Rate limit check
@@ -1071,6 +1201,7 @@ class MessageOrchestrator:
                 return
 
         chat = update.message.chat
+        msg_thread_id = getattr(update.message, "message_thread_id", None)
         await chat.send_action("typing")
 
         verbose_level = self._get_verbose_level(context)
@@ -1090,11 +1221,11 @@ class MessageOrchestrator:
             interrupt_event=interrupt_event,
             progress_msg=progress_msg,
         )
-        self._active_requests[user_id] = active_request
+        self._active_requests[req_key] = active_request
 
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
-            self._active_requests.pop(user_id, None)
+            self._active_requests.pop(req_key, None)
             await progress_msg.edit_text(
                 "Claude integration not available. Check configuration.",
                 reply_markup=None,
@@ -1136,14 +1267,17 @@ class MessageOrchestrator:
             approved_directory=self.settings.approved_directory,
             draft_streamer=draft_streamer,
             interrupt_event=interrupt_event,
+            bot=context.bot,
+            chat_id=chat.id,
+            message_thread_id=msg_thread_id,
         )
 
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
-        success = True
-        try:
-            claude_response = await claude_integration.run_command(
+        # --- The actual SDK call, optionally gated by the RAM executor ---
+        async def _run_claude() -> Any:
+            return await claude_integration.run_command(
                 prompt=message_text,
                 working_directory=current_dir,
                 user_id=user_id,
@@ -1152,8 +1286,15 @@ class MessageOrchestrator:
                 force_new=force_new,
                 interrupt_event=interrupt_event,
                 chat_id=chat.id,
-                message_thread_id=getattr(update.message, "message_thread_id", None),
+                message_thread_id=msg_thread_id,
             )
+
+        success = True
+        try:
+            if self._executor and self.settings.enable_project_threads:
+                claude_response = await self._executor.submit(req_key, _run_claude)
+            else:
+                claude_response = await _run_claude()
 
             # New session created successfully — clear the one-shot flag
             if force_new:
@@ -1206,7 +1347,7 @@ class MessageOrchestrator:
             ]
         finally:
             heartbeat.cancel()
-            self._active_requests.pop(user_id, None)
+            self._active_requests.pop(req_key, None)
             if draft_streamer:
                 try:
                     await draft_streamer.flush()
@@ -1827,7 +1968,13 @@ class MessageOrchestrator:
             )
             return
 
-        active = self._active_requests.get(target_user_id)
+        # Find any active request belonging to this user (keys may be
+        # plain user_id or "chat:thread" when project threads are active).
+        active: Optional[ActiveRequest] = None
+        for key, req in self._active_requests.items():
+            if req.user_id == target_user_id:
+                active = req
+                break
         if not active:
             await query.answer("Already completed.", show_alert=False)
             return

@@ -1,15 +1,37 @@
 """Selective-concurrency update processor for PTB.
 
-Regular updates (messages, commands) process sequentially -- one at a time.
+Regular updates (messages, commands) process sequentially -- one at a time
+*per project thread*.  When project threads are enabled, different threads
+get independent locks so they can run in parallel.
+
 Priority callbacks (stop:*) bypass the queue and run immediately so they can
 interrupt the currently-running handler.
 """
 
 import asyncio
-from typing import Any, Awaitable
+from collections import defaultdict
+from typing import Any, Awaitable, Dict
 
 from telegram import Update
 from telegram.ext._baseupdateprocessor import BaseUpdateProcessor
+
+
+def _thread_key(update: Update) -> str:
+    """Derive a concurrency-partition key from the update.
+
+    Messages inside a forum topic carry ``message_thread_id``; we combine
+    it with ``chat_id`` so different topics in the same chat (or different
+    chats) each get their own lock.  Updates without a thread id all share
+    the ``"global"`` key, preserving the original one-at-a-time behaviour.
+    """
+    msg = update.effective_message
+    if msg is not None:
+        thread_id = getattr(msg, "message_thread_id", None)
+        if isinstance(thread_id, int):
+            chat_id = getattr(msg, "chat_id", None)
+            if isinstance(chat_id, int):
+                return f"{chat_id}:{thread_id}"
+    return "global"
 
 
 class StopAwareUpdateProcessor(BaseUpdateProcessor):
@@ -21,8 +43,9 @@ class StopAwareUpdateProcessor(BaseUpdateProcessor):
 
     For priority callbacks (``stop:*``): we just ``await coroutine`` -- runs
     immediately.
-    For everything else: we acquire ``_sequential_lock`` first -- only one
-    runs at a time.
+    For everything else: we acquire a *per-thread* lock -- only one update
+    per project thread runs at a time, but different threads can run in
+    parallel.
 
     A stop callback arrives while a text handler holds the lock -> stop
     callback runs concurrently -> fires the ``asyncio.Event`` -> the watcher
@@ -35,7 +58,7 @@ class StopAwareUpdateProcessor(BaseUpdateProcessor):
     def __init__(self) -> None:
         # High limit so priority callbacks are never blocked by semaphore
         super().__init__(max_concurrent_updates=256)
-        self._sequential_lock = asyncio.Lock()
+        self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     @classmethod
     def _is_priority_callback(cls, update: object) -> bool:
@@ -54,13 +77,15 @@ class StopAwareUpdateProcessor(BaseUpdateProcessor):
         update: object,
         coroutine: Awaitable[Any],
     ) -> None:
-        """Process an update, applying sequential lock for non-priority updates."""
+        """Process an update, applying per-thread sequential lock."""
         if self._is_priority_callback(update):
             # Run immediately -- no sequential lock
             await coroutine
         else:
-            # One at a time for everything else
-            async with self._sequential_lock:
+            # Derive key: different project threads get independent locks,
+            # non-thread messages share "global".
+            key = _thread_key(update) if isinstance(update, Update) else "global"
+            async with self._locks[key]:
                 await coroutine
 
     async def initialize(self) -> None:

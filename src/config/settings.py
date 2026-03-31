@@ -306,6 +306,23 @@ class Settings(BaseSettings):
         ge=0.0,
     )
 
+    # Concurrency: parallel SDK instances per project thread
+    ram_threshold_pct: float = Field(
+        90.0,
+        description=(
+            "RAM usage percentage at which new SDK requests switch to "
+            "synchronous (queued) execution"
+        ),
+        ge=50.0,
+        le=99.0,
+    )
+    max_concurrent_sdk: int = Field(
+        5,
+        description="Hard cap on simultaneous Claude SDK instances",
+        ge=1,
+        le=20,
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )

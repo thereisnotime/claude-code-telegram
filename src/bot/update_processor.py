@@ -22,7 +22,7 @@ from telegram.ext._baseupdateprocessor import BaseUpdateProcessor
 logger = structlog.get_logger()
 
 # Locks idle for longer than this are eligible for pruning.
-_LOCK_IDLE_SECONDS = 3600  # 1 hour
+_LOCK_IDLE_SECONDS = 172800  # 48 hours
 # Run the prune sweep at most once every this many seconds.
 _PRUNE_INTERVAL_SECONDS = 300  # 5 minutes
 

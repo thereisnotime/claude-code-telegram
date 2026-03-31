@@ -147,5 +147,6 @@ sessions/
 backups/
 uploads/
 config/mcp.json
+config/projects.yaml
 # Safe watch lock file
 .safe_watch_lock

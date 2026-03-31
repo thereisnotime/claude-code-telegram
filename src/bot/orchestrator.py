@@ -303,8 +303,11 @@ class MessageOrchestrator:
         if not self._is_within(current_dir, project_root) or not current_dir.is_dir():
             current_dir = project_root
 
-        context.user_data["current_directory"] = current_dir
-        context.user_data["claude_session_id"] = state.get("claude_session_id")
+        # NOTE: Do NOT write current_directory / claude_session_id to the
+        # shared context.user_data top-level keys.  With parallel threads
+        # those keys would race.  Instead, carry them inside
+        # _thread_context and let the handler read from there.
+        loaded_session_id = state.get("claude_session_id")
         context.user_data["_thread_context"] = {
             "chat_id": chat.id,
             "message_thread_id": message_thread_id,
@@ -312,18 +315,63 @@ class MessageOrchestrator:
             "project_slug": project.slug,
             "project_root": str(project_root),
             "project_name": project.name,
+            "current_directory": current_dir,
+            "claude_session_id": loaded_session_id,
+            # Snapshots of values at load time — used by _persist_thread_state
+            # to detect whether the handler updated via _thread_context or via
+            # the shared user_data keys (legacy path).
+            "_loaded_session_id": loaded_session_id,
+            "_loaded_current_directory": current_dir,
         }
+        # Legacy compat: handlers that don't know about _thread_context
+        # still read these.  Safe because _inject_deps holds the per-thread
+        # update-processor lock, so only ONE handler per state_key is in
+        # this section at a time.
+        context.user_data["current_directory"] = current_dir
+        context.user_data["claude_session_id"] = state.get("claude_session_id")
         return True
 
     def _persist_thread_state(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Persist compatibility keys back into per-thread state."""
+        """Persist thread-local state back into per-thread storage.
+
+        Detects whether the handler updated values via the thread-safe
+        ``_thread_context`` dict (new path) or via the shared
+        ``context.user_data`` top-level keys (legacy path) and persists
+        whichever changed.
+        """
         assert context.user_data is not None
         thread_context = context.user_data.get("_thread_context")
         if not thread_context:
             return
 
         project_root = Path(thread_context["project_root"])
-        current_dir = context.user_data.get("current_directory", project_root)
+
+        # --- session_id ---
+        tc_session = thread_context.get("claude_session_id")
+        loaded_session = thread_context.get("_loaded_session_id")
+        shared_session = context.user_data.get("claude_session_id")
+        if tc_session != loaded_session:
+            # Thread-aware handler updated _thread_context → prefer it
+            session_id = tc_session
+        elif shared_session != loaded_session:
+            # Legacy handler updated the shared key → use it
+            session_id = shared_session
+        else:
+            session_id = tc_session  # unchanged
+
+        # --- current_directory ---
+        tc_dir = thread_context.get("current_directory")
+        loaded_dir = thread_context.get("_loaded_current_directory")
+        shared_dir = context.user_data.get("current_directory")
+        if tc_dir != loaded_dir:
+            current_dir = tc_dir
+        elif shared_dir != loaded_dir:
+            current_dir = shared_dir
+        else:
+            current_dir = tc_dir
+
+        if current_dir is None:
+            current_dir = project_root
         if not isinstance(current_dir, Path):
             current_dir = Path(str(current_dir))
         current_dir = current_dir.resolve()
@@ -333,7 +381,7 @@ class MessageOrchestrator:
         thread_states = context.user_data.setdefault("thread_state", {})
         thread_states[thread_context["state_key"]] = {
             "current_directory": str(current_dir),
-            "claude_session_id": context.user_data.get("claude_session_id"),
+            "claude_session_id": session_id,
             "project_slug": thread_context["project_slug"],
         }
 
@@ -1232,10 +1280,20 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
+        # Read current_directory and session_id from the thread-safe
+        # _thread_context when running under project threads, falling
+        # back to the shared user_data keys for non-thread mode.
+        thread_ctx = context.user_data.get("_thread_context")
+        if thread_ctx:
+            current_dir = thread_ctx.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = thread_ctx.get("claude_session_id")
+        else:
+            current_dir = context.user_data.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = context.user_data.get("claude_session_id")
 
         # Check if /new was used — skip auto-resume for this first message.
         # Flag is only cleared after a successful run so retries keep the intent.
@@ -1300,7 +1358,12 @@ class MessageOrchestrator:
             if force_new:
                 context.user_data["force_new_session"] = False
 
-            context.user_data["claude_session_id"] = claude_response.session_id
+            # Write results back to the thread-safe _thread_context when
+            # in project-thread mode so concurrent handlers don't clash.
+            if thread_ctx:
+                thread_ctx["claude_session_id"] = claude_response.session_id
+            else:
+                context.user_data["claude_session_id"] = claude_response.session_id
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
@@ -1308,6 +1371,12 @@ class MessageOrchestrator:
             _update_working_directory_from_claude_response(
                 claude_response, context, self.settings, user_id
             )
+
+            # If thread mode, copy any directory update into _thread_context
+            if thread_ctx:
+                thread_ctx["current_directory"] = context.user_data.get(
+                    "current_directory", thread_ctx.get("current_directory")
+                )
 
             # Store interaction
             storage = context.bot_data.get("storage")

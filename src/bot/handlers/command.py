@@ -1339,3 +1339,70 @@ def _escape_markdown(text: str) -> str:
     Legacy name kept for compatibility with callers; actually escapes HTML.
     """
     return escape_html(text)
+
+
+async def debug_show_config(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /debug_show_config — dump all settings, masking secrets."""
+    assert update.message is not None
+    assert update.effective_user is not None
+    assert context.bot_data is not None
+
+    from pydantic import SecretStr
+
+    user_id = update.effective_user.id
+    settings: Settings = context.bot_data["settings"]
+    audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
+
+    if settings.allowed_users and user_id not in settings.allowed_users:
+        await update.message.reply_text("🚫 <b>Access denied.</b>", parse_mode="HTML")
+        if audit_logger:
+            await audit_logger.log_command(user_id, "debug_show_config", [], False)
+        return
+
+    lines: list[str] = []
+    for field_name, field_info in settings.model_fields.items():
+        value = getattr(settings, field_name, None)
+        if isinstance(value, SecretStr):
+            raw = value.get_secret_value()
+            display = f"***{raw[-4:]}" if len(raw) >= 4 else "***"
+        elif value is None:
+            display = "&lt;not set&gt;"
+        else:
+            display = escape_html(str(value))
+        lines.append(f"{field_name}: {display}")
+
+    header = "<b>⚙️ Current Configuration</b>\n\n"
+    chunk = header
+    messages: list[str] = []
+
+    for line in lines:
+        candidate = chunk + line + "\n"
+        # Telegram limit is 4096; leave margin for <pre> tags
+        if len(candidate) + 13 > 4096:
+            messages.append(f"{chunk}<pre>\n</pre>" if not chunk.startswith("<pre>") else chunk)
+            chunk = "<pre>" + line + "\n"
+        else:
+            if not chunk.endswith("\n") and chunk != header:
+                chunk += "\n"
+            chunk = candidate
+
+    if chunk:
+        messages.append(chunk)
+
+    # Wrap each message in <pre> if not already
+    for i, msg in enumerate(messages):
+        if i == 0:
+            messages[i] = header + "<pre>\n" + msg.removeprefix(header) + "</pre>"
+        else:
+            if not msg.startswith("<pre>"):
+                messages[i] = "<pre>" + msg + "</pre>"
+
+    for msg in messages:
+        await update.message.reply_text(msg, parse_mode="HTML")
+
+    if audit_logger:
+        await audit_logger.log_command(user_id, "debug_show_config", [], True)
+
+    logger.info("debug_show_config executed", user_id=user_id)

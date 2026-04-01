@@ -122,14 +122,18 @@ class ProjectThreadManager:
                     raise PrivateTopicsUnavailableError(
                         "Private chat topics are not enabled for this bot chat."
                     ) from e
-                result.failed += 1
-                logger.warning(
-                    "Could not close stale topic",
-                    chat_id=stale.chat_id,
-                    message_thread_id=stale.message_thread_id,
-                    project_slug=stale.project_slug,
-                    error=str(e),
-                )
+                # Private chats don't support close — just deactivate
+                if "not a supergroup" in str(e).lower():
+                    result.closed += 1
+                else:
+                    result.failed += 1
+                    logger.warning(
+                        "Could not close stale topic",
+                        chat_id=stale.chat_id,
+                        message_thread_id=stale.message_thread_id,
+                        project_slug=stale.project_slug,
+                        error=str(e),
+                    )
             finally:
                 await self.repository.set_active(
                     chat_id=stale.chat_id,
@@ -268,6 +272,9 @@ class ProjectThreadManager:
             # Topic already open — Telegram returns "Topic_not_modified"
             if "not_modified" in str(e).lower():
                 return "ok"
+            # Private chats don't support reopen/close — topic is still usable
+            if "not a supergroup" in str(e).lower():
+                return "ok"
             logger.warning(
                 "Could not verify topic usability",
                 chat_id=mapping.chat_id,
@@ -293,6 +300,9 @@ class ProjectThreadManager:
                 return "unusable"
             # Topic already open — Telegram returns "Topic_not_modified"
             if "not_modified" in str(e).lower():
+                return "reopened"
+            # Private chats don't support reopen/close — treat as reopened
+            if "not a supergroup" in str(e).lower():
                 return "reopened"
             logger.warning(
                 "Could not reopen topic",

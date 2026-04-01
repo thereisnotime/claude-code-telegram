@@ -9,6 +9,10 @@ import yaml  # type: ignore[import-untyped]
 
 logger = structlog.get_logger(__name__)
 
+PROJECT_TYPE_WORKSPACE = "workspace"
+PROJECT_TYPE_NOTIFICATION = "notification"
+VALID_PROJECT_TYPES = {PROJECT_TYPE_WORKSPACE, PROJECT_TYPE_NOTIFICATION}
+
 
 @dataclass(frozen=True)
 class ProjectDefinition:
@@ -16,9 +20,10 @@ class ProjectDefinition:
 
     slug: str
     name: str
-    relative_path: Path
-    absolute_path: Path
+    relative_path: Optional[Path] = None
+    absolute_path: Optional[Path] = None
     enabled: bool = True
+    project_type: str = PROJECT_TYPE_WORKSPACE
 
 
 class ProjectRegistry:
@@ -36,6 +41,20 @@ class ProjectRegistry:
     def list_enabled(self) -> List[ProjectDefinition]:
         """Return enabled projects only."""
         return [p for p in self._projects if p.enabled]
+
+    def list_workspaces(self) -> List[ProjectDefinition]:
+        """Return enabled workspace projects only."""
+        return [
+            p
+            for p in self._projects
+            if p.enabled and p.project_type == PROJECT_TYPE_WORKSPACE
+        ]
+
+    def list_by_type(self, project_type: str) -> List[ProjectDefinition]:
+        """Return enabled projects of a specific type."""
+        return [
+            p for p in self._projects if p.enabled and p.project_type == project_type
+        ]
 
     def get_by_slug(self, slug: str) -> Optional[ProjectDefinition]:
         """Get project by slug."""
@@ -63,9 +82,9 @@ def load_project_registry(
         return ProjectRegistry([])
 
     approved_root = approved_directory.resolve()
-    seen_slugs = set()
-    seen_names = set()
-    seen_rel_paths = set()
+    seen_slugs: set[str] = set()
+    seen_names: set[str] = set()
+    seen_rel_paths: set[str] = set()
     projects: List[ProjectDefinition] = []
 
     for idx, raw in enumerate(raw_projects):
@@ -74,13 +93,40 @@ def load_project_registry(
 
         slug = str(raw.get("slug", "")).strip()
         name = str(raw.get("name", "")).strip()
-        rel_path_raw = str(raw.get("path", "")).strip()
         enabled = bool(raw.get("enabled", True))
+        raw_type = str(raw.get("type", PROJECT_TYPE_WORKSPACE)).strip()
 
         if not slug:
             raise ValueError(f"Project entry at index {idx} is missing 'slug'")
         if not name:
             raise ValueError(f"Project '{slug}' is missing 'name'")
+        if raw_type not in VALID_PROJECT_TYPES:
+            raise ValueError(
+                f"Project '{slug}' has invalid type '{raw_type}', "
+                f"must be one of {sorted(VALID_PROJECT_TYPES)}"
+            )
+
+        if slug in seen_slugs:
+            raise ValueError(f"Duplicate project slug: {slug}")
+        if name in seen_names:
+            raise ValueError(f"Duplicate project name: {name}")
+        seen_slugs.add(slug)
+        seen_names.add(name)
+
+        # Notification projects don't need a directory path
+        if raw_type == PROJECT_TYPE_NOTIFICATION:
+            projects.append(
+                ProjectDefinition(
+                    slug=slug,
+                    name=name,
+                    enabled=enabled,
+                    project_type=raw_type,
+                )
+            )
+            continue
+
+        # Workspace projects require a valid directory
+        rel_path_raw = str(raw.get("path", "")).strip()
         if not rel_path_raw:
             raise ValueError(f"Project '{slug}' is missing 'path'")
 
@@ -106,15 +152,8 @@ def load_project_registry(
             continue
 
         rel_path_norm = str(rel_path)
-        if slug in seen_slugs:
-            raise ValueError(f"Duplicate project slug: {slug}")
-        if name in seen_names:
-            raise ValueError(f"Duplicate project name: {name}")
         if rel_path_norm in seen_rel_paths:
             raise ValueError(f"Duplicate project path: {rel_path_norm}")
-
-        seen_slugs.add(slug)
-        seen_names.add(name)
         seen_rel_paths.add(rel_path_norm)
 
         projects.append(
@@ -124,6 +163,7 @@ def load_project_registry(
                 relative_path=rel_path,
                 absolute_path=absolute_path,
                 enabled=enabled,
+                project_type=raw_type,
             )
         )
 

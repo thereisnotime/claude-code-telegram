@@ -90,8 +90,8 @@ def deps():
     }
 
 
-def test_agentic_registers_7_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, status_all, verbose, repo, restart commands."""
+def test_agentic_registers_8_commands(agentic_settings, deps):
+    """Agentic mode registers start, new, status, status_all, verbose, repo, restart, debug_show_config."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -108,7 +108,7 @@ def test_agentic_registers_7_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 7
+    assert len(cmd_handlers) == 8
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
@@ -118,8 +118,8 @@ def test_agentic_registers_7_commands(agentic_settings, deps):
     assert frozenset({"restart"}) in commands
 
 
-def test_classic_registers_14_commands(classic_settings, deps):
-    """Classic mode registers all 14 commands."""
+def test_classic_registers_15_commands(classic_settings, deps):
+    """Classic mode registers all 15 commands."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -134,7 +134,7 @@ def test_classic_registers_14_commands(classic_settings, deps):
         if isinstance(call[0][0], CommandHandler)
     ]
 
-    assert len(cmd_handlers) == 14
+    assert len(cmd_handlers) == 15
 
 
 def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):

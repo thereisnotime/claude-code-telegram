@@ -150,3 +150,5 @@ config/mcp.json
 config/projects.yaml
 # Safe watch lock file
 .safe_watch_lock
+# Commit notification marker
+.last_notified_commit

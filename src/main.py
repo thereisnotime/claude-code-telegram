@@ -480,6 +480,33 @@ async def run_application(app: Dict[str, Any]) -> None:
         assert bot.app is not None
         telegram_bot = bot.app.bot
 
+        # Commit notification (fire-and-forget, after sync_topics created topics)
+        if (
+            config.enable_project_threads
+            and config.project_threads_mode == "group"
+            and config.project_threads_chat_id is not None
+        ):
+            from src.notifications.commit_notifier import (
+                check_and_notify_new_commits,
+            )
+            from src.projects.registry import PROJECT_TYPE_NOTIFICATION
+
+            news_projects = [
+                p
+                for p in (registry.list_by_type(PROJECT_TYPE_NOTIFICATION))
+                if p.enabled
+            ]
+            for news_proj in news_projects:
+                asyncio.create_task(
+                    check_and_notify_new_commits(
+                        bot=telegram_bot,
+                        repo_dir=Path(__file__).resolve().parent.parent,
+                        chat_id=config.project_threads_chat_id,
+                        thread_repo=storage.project_threads,
+                        news_slug=news_proj.slug,
+                    )
+                )
+
         # Start event bus
         await event_bus.start()
 

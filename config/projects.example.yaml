@@ -1,4 +1,5 @@
 projects:
+  # Workspace projects — each maps to a directory under APPROVED_DIRECTORY
   - slug: claude-code-telegram
     name: Claude Code Telegram
     path: claude-code-telegram-main
@@ -7,4 +8,10 @@ projects:
   - slug: infra
     name: Infrastructure
     path: infrastructure
+    enabled: true
+
+  # Notification topics — no directory needed, used for bot announcements
+  - slug: news
+    name: "\U0001f4e2 News"
+    type: notification
     enabled: true

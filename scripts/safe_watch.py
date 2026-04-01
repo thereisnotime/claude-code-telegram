@@ -81,6 +81,7 @@ class SafeWatcher:
         self._shutting_down = False
         self._started_at: float = 0.0  # timestamp of last bot start
         self._lock_path = PROJECT_ROOT / ".safe_watch_lock"
+        self._restart_pending = False  # set when changes skipped due to lock
 
     def start_bot(self) -> subprocess.Popen:
         """Start the bot as a subprocess."""
@@ -286,9 +287,10 @@ class SafeWatcher:
         # these changes itself as part of its work.
         if self._lock_path.exists():
             log.info(
-                "Lock file present (%s) — bot is mid-execution, skipping restart",
+                "Lock file present (%s) — bot is mid-execution, queuing restart",
                 self._lock_path.name,
             )
+            self._restart_pending = True
             return
 
         log.info(
@@ -337,11 +339,30 @@ class SafeWatcher:
 
         watchfiles.watch() blocks until a file changes, so without this
         thread a dead bot would sit unnoticed until the next file edit.
+        Also handles deferred restarts queued while the lock file was held.
         """
         while not self._shutting_down:
             time.sleep(poll_interval)
             if self._shutting_down:
                 break
+
+            # Check for deferred restart: changes were detected while the
+            # lock file was present.  Once the lock disappears, restart.
+            if self._restart_pending and not self._lock_path.exists():
+                log.info(
+                    "Lock file cleared — executing deferred restart"
+                )
+                self._restart_pending = False
+                if self.check_restart_limit():
+                    self.record_good_state()
+                    self.stop_bot()
+                    self.start_bot()
+                    if not self.health_check():
+                        log.error("Deferred restart failed health check")
+                        if self.rollback():
+                            self.start_bot()
+                continue
+
             if self.process and self.process.poll() is not None:
                 exit_code = self.process.returncode
                 log.warning(

@@ -29,14 +29,28 @@ class ProjectDefinition:
 class ProjectRegistry:
     """In-memory validated project registry."""
 
-    def __init__(self, projects: List[ProjectDefinition]) -> None:
+    def __init__(
+        self,
+        projects: List[ProjectDefinition],
+        all_configured_slugs: Optional[frozenset[str]] = None,
+    ) -> None:
         self._projects = projects
         self._by_slug: Dict[str, ProjectDefinition] = {p.slug: p for p in projects}
+        self._all_configured_slugs: frozenset[str] = (
+            all_configured_slugs
+            if all_configured_slugs is not None
+            else frozenset(p.slug for p in projects if p.enabled)
+        )
 
     @property
     def projects(self) -> List[ProjectDefinition]:
         """Return all projects."""
         return list(self._projects)
+
+    @property
+    def all_configured_slugs(self) -> frozenset[str]:
+        """All enabled slugs from YAML, including those with missing directories."""
+        return self._all_configured_slugs
 
     def list_enabled(self) -> List[ProjectDefinition]:
         """Return enabled projects only."""
@@ -86,6 +100,7 @@ def load_project_registry(
     seen_names: set[str] = set()
     seen_rel_paths: set[str] = set()
     projects: List[ProjectDefinition] = []
+    all_enabled_slugs: set[str] = set()
 
     for idx, raw in enumerate(raw_projects):
         if not isinstance(raw, dict):
@@ -112,6 +127,9 @@ def load_project_registry(
             raise ValueError(f"Duplicate project name: {name}")
         seen_slugs.add(slug)
         seen_names.add(name)
+
+        if enabled:
+            all_enabled_slugs.add(slug)
 
         # Notification projects don't need a directory path
         if raw_type == PROJECT_TYPE_NOTIFICATION:
@@ -167,4 +185,4 @@ def load_project_registry(
             )
         )
 
-    return ProjectRegistry(projects)
+    return ProjectRegistry(projects, all_configured_slugs=frozenset(all_enabled_slugs))

@@ -57,7 +57,6 @@ class ProjectThreadManager:
         result = TopicSyncResult()
 
         enabled = self.registry.list_enabled()
-        active_slugs = [project.slug for project in enabled]
 
         for project in enabled:
             try:
@@ -106,7 +105,7 @@ class ProjectThreadManager:
 
         stale_mappings = await self.repository.list_stale_active_mappings(
             chat_id=chat_id,
-            active_project_slugs=active_slugs,
+            active_project_slugs=list(self.registry.all_configured_slugs),
         )
         for stale in stale_mappings:
             try:

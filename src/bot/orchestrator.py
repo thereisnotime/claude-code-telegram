@@ -769,9 +769,7 @@ class MessageOrchestrator:
                 f"<pre>{log_output}</pre>",
             ]
 
-            await update.message.reply_text(
-                "\n".join(lines), parse_mode="HTML"
-            )
+            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
         except Exception as e:
             await update.message.reply_text(f"⚠️ Failed to read git info: {e}")
 

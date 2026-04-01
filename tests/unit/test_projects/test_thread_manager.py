@@ -543,3 +543,110 @@ async def test_sync_topics_does_not_retry_retry_after(
     assert result.failed == 1
     assert bot.create_forum_topic.await_count == 1
     sleep_mock.assert_not_awaited()
+
+
+async def test_sync_does_not_deactivate_missing_directory_project(
+    tmp_path: Path, db_manager
+) -> None:
+    """Projects with missing directories should keep their DB mappings active."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+
+    # Create both directories and do initial sync
+    config_file = _write_registry(tmp_path, approved, "app1,app2")
+    initial_registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    manager = ProjectThreadManager(
+        initial_registry, repo, sync_action_interval_seconds=0.0
+    )
+
+    bot = AsyncMock()
+    bot.create_forum_topic = AsyncMock(
+        side_effect=[
+            SimpleNamespace(message_thread_id=101),
+            SimpleNamespace(message_thread_id=102),
+        ]
+    )
+    bot.send_message = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
+    bot.close_forum_topic = AsyncMock()
+    bot.edit_forum_topic = AsyncMock()
+
+    first = await manager.sync_topics(bot, chat_id=-1001234567890)
+    assert first.created == 2
+
+    # Remove app2 directory (simulates temporarily missing)
+    import shutil
+
+    shutil.rmtree(approved / "app2")
+
+    # Reload registry — app2 is still in YAML but dir is gone
+    reloaded_registry = load_project_registry(config_file, approved)
+    assert "app2" not in [p.slug for p in reloaded_registry.list_enabled()]
+    assert "app2" in reloaded_registry.all_configured_slugs
+
+    # Re-sync with reloaded registry
+    reloaded_manager = ProjectThreadManager(
+        reloaded_registry, repo, sync_action_interval_seconds=0.0
+    )
+    result = await reloaded_manager.sync_topics(bot, chat_id=-1001234567890)
+
+    # app2 mapping must still be active
+    mappings = await repo.list_by_chat(-1001234567890, active_only=False)
+    app2 = [m for m in mappings if m.project_slug == "app2"]
+    assert app2
+    assert app2[0].is_active is True
+    assert result.deactivated == 0
+    assert result.closed == 0
+    bot.close_forum_topic.assert_not_called()
+
+
+async def test_sync_deactivates_project_removed_from_yaml(
+    tmp_path: Path, db_manager
+) -> None:
+    """Projects fully removed from YAML should still be deactivated."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+
+    config_file = _write_registry(tmp_path, approved, "app1,app2")
+    initial_registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    manager = ProjectThreadManager(
+        initial_registry, repo, sync_action_interval_seconds=0.0
+    )
+
+    bot = AsyncMock()
+    bot.create_forum_topic = AsyncMock(
+        side_effect=[
+            SimpleNamespace(message_thread_id=101),
+            SimpleNamespace(message_thread_id=102),
+        ]
+    )
+    bot.send_message = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
+    bot.close_forum_topic = AsyncMock()
+    bot.edit_forum_topic = AsyncMock()
+
+    await manager.sync_topics(bot, chat_id=-1001234567890)
+
+    # Write a new YAML that completely removes app2
+    reduced_file = tmp_path / "projects_reduced.yaml"
+    reduced_file.write_text(
+        "projects:\n" "  - slug: app1\n" "    name: App1\n" "    path: app1\n",
+        encoding="utf-8",
+    )
+    reduced_registry = load_project_registry(reduced_file, approved)
+    assert "app2" not in reduced_registry.all_configured_slugs
+
+    reduced_manager = ProjectThreadManager(
+        reduced_registry, repo, sync_action_interval_seconds=0.0
+    )
+    result = await reduced_manager.sync_topics(bot, chat_id=-1001234567890)
+
+    mappings = await repo.list_by_chat(-1001234567890, active_only=False)
+    app2 = [m for m in mappings if m.project_slug == "app2"]
+    assert app2
+    assert app2[0].is_active is False
+    assert result.deactivated == 1

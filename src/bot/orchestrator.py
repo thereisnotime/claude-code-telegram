@@ -1409,6 +1409,14 @@ class MessageOrchestrator:
                 response_content = (
                     response_content or ""
                 ) + "\n\n_(Interrupted by user)_"
+            elif claude_response.hit_turn_limit:
+                response_content = (
+                    response_content or ""
+                ) + (
+                    "\n\n⚠️ _Response cut short — turn limit reached "
+                    f"({claude_response.num_turns} turns). "
+                    "Send a follow-up message to continue._"
+                )
 
             formatted_messages = formatter.format_claude_response(response_content)
 

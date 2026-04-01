@@ -57,6 +57,7 @@ class ClaudeResponse:
     error_type: Optional[str] = None
     tools_used: List[Dict[str, Any]] = field(default_factory=list)
     interrupted: bool = False
+    hit_turn_limit: bool = False
 
 
 @dataclass
@@ -433,11 +434,26 @@ class ClaudeSDKManager:
             tools_used: List[Dict[str, Any]] = []
             claude_session_id = None
             result_content = None
+            hit_turn_limit = False
             for message in messages:
                 if isinstance(message, ResultMessage):
                     cost = getattr(message, "total_cost_usd", 0.0) or 0.0
                     claude_session_id = getattr(message, "session_id", None)
                     result_content = getattr(message, "result", None)
+                    # Detect turn-limit exhaustion from subtype
+                    result_subtype = getattr(message, "subtype", "")
+                    result_num_turns = getattr(message, "num_turns", 0)
+                    if (
+                        result_subtype == "max_turns"
+                        or result_num_turns >= self.config.claude_max_turns
+                    ):
+                        hit_turn_limit = True
+                        logger.warning(
+                            "Claude hit turn limit",
+                            subtype=result_subtype,
+                            num_turns=result_num_turns,
+                            max_turns=self.config.claude_max_turns,
+                        )
                     current_time = asyncio.get_event_loop().time()
                     for msg in messages:
                         if isinstance(msg, AssistantMessage):
@@ -529,6 +545,7 @@ class ClaudeSDKManager:
                 ),
                 tools_used=tools_used,
                 interrupted=interrupted,
+                hit_turn_limit=hit_turn_limit,
             )
 
         except asyncio.TimeoutError:

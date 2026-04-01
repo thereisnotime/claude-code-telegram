@@ -721,7 +721,9 @@ class MessageOrchestrator:
         assert update.message is not None
         import subprocess
 
-        repo_dir = self.settings.approved_directory
+        # Use the bot's own installation directory (not approved_directory
+        # which may be a parent like /home/user/).
+        repo_dir = Path(__file__).resolve().parent.parent.parent
         git_dir = repo_dir / ".git"
         if not git_dir.exists():
             await update.message.reply_text(

@@ -297,6 +297,16 @@ class MessageOrchestrator:
             )
             return False
 
+        # Notification topics are read-only (no workspace directory)
+        if project.absolute_path is None:
+            await self._reject_for_thread_mode(
+                update,
+                f"\U0001f4e2 <b>{escape_html(project.name)}</b> "
+                "is a notification-only topic.\n\n"
+                "Please use a project topic to interact with the bot.",
+            )
+            return False
+
         assert context.user_data is not None
         state_key = f"{chat.id}:{message_thread_id}"
         thread_states = context.user_data.setdefault("thread_state", {})

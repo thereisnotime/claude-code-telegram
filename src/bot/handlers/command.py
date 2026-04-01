@@ -847,8 +847,12 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             project_list = "\n".join(
                 [
                     f"• <b>{escape_html(p.name)}</b> "
-                    f"(<code>{escape_html(p.slug)}</code>) "
-                    f"→ <code>{escape_html(str(p.relative_path))}</code>"
+                    f"(<code>{escape_html(p.slug)}</code>)"
+                    + (
+                        f" → <code>{escape_html(str(p.relative_path))}</code>"
+                        if p.relative_path
+                        else ""
+                    )
                     for p in projects
                 ]
             )

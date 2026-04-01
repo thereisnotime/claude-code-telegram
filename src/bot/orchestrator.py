@@ -466,6 +466,7 @@ class MessageOrchestrator:
             ("status_all", self.agentic_status_all),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
+            ("version", self.agentic_version),
             ("restart", command.restart_command),
             ("debug_show_config", command.debug_show_config),
         ]
@@ -601,6 +602,7 @@ class MessageOrchestrator:
                 BotCommand("status_all", "Show all sessions (DB + FS)"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
+                BotCommand("version", "Show version and recent commits"),
                 BotCommand("restart", "Restart the bot"),
                 BotCommand("sync_threads", "Sync project topics"),
                 BotCommand("debug_show_config", "Show current bot config"),
@@ -711,6 +713,61 @@ class MessageOrchestrator:
         context.user_data["force_new_session"] = True
 
         await update.message.reply_text("Session reset. What's next?")
+
+    async def agentic_version(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show version info: branch, SHA, and last 5 commits."""
+        assert update.message is not None
+        import subprocess
+
+        repo_dir = self.settings.approved_directory
+        git_dir = repo_dir / ".git"
+        if not git_dir.exists():
+            await update.message.reply_text(
+                "ℹ️ No .git directory found — version info unavailable.",
+            )
+            return
+
+        try:
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=str(repo_dir),
+                timeout=5,
+            ).stdout.strip()
+
+            sha = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=str(repo_dir),
+                timeout=5,
+            ).stdout.strip()
+
+            log_output = subprocess.run(
+                ["git", "log", "--oneline", "--format=%h %an: %s", "-5"],
+                capture_output=True,
+                text=True,
+                cwd=str(repo_dir),
+                timeout=5,
+            ).stdout.strip()
+
+            lines = [
+                f"🏷 <b>Branch:</b> <code>{branch}</code>",
+                f"🔖 <b>SHA:</b> <code>{sha}</code>",
+                "",
+                "<b>Last 5 commits:</b>",
+            ]
+            for commit_line in log_output.splitlines():
+                lines.append(f"<code>{commit_line}</code>")
+
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="HTML"
+            )
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Failed to read git info: {e}")
 
     async def agentic_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

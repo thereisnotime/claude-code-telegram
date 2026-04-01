@@ -290,6 +290,19 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.bot_data["project_registry"] = registry
 
         result = await manager.sync_topics(context.bot, chat_id=target_chat_id)
+
+        # Fire commit notifications after sync creates/verifies topics
+        from src.notifications.commit_notifier import fire_commit_notifications
+
+        storage_facade = context.bot_data.get("storage")
+        if storage_facade and registry:
+            fire_commit_notifications(
+                bot=context.bot,
+                chat_id=target_chat_id,
+                registry=registry,
+                thread_repo=storage_facade.project_threads,
+            )
+
         await status_msg.edit_text(
             "✅ <b>Project topic sync complete</b>\n\n"
             f"• Created: <b>{result.created}</b>\n"
@@ -1341,9 +1354,7 @@ def _escape_markdown(text: str) -> str:
     return escape_html(text)
 
 
-async def debug_show_config(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def debug_show_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /debug_show_config — dump all settings, masking secrets."""
     assert update.message is not None
     assert update.effective_user is not None
@@ -1381,7 +1392,9 @@ async def debug_show_config(
         candidate = chunk + line + "\n"
         # Telegram limit is 4096; leave margin for <pre> tags
         if len(candidate) + 13 > 4096:
-            messages.append(f"{chunk}<pre>\n</pre>" if not chunk.startswith("<pre>") else chunk)
+            messages.append(
+                f"{chunk}<pre>\n</pre>" if not chunk.startswith("<pre>") else chunk
+            )
             chunk = "<pre>" + line + "\n"
         else:
             if not chunk.endswith("\n") and chunk != header:

@@ -1,5 +1,6 @@
 """Notify Telegram when new git commits are pulled."""
 
+import asyncio
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -8,11 +9,41 @@ import structlog
 from telegram import Bot
 from telegram.error import TelegramError
 
+from src.projects.registry import PROJECT_TYPE_NOTIFICATION, ProjectRegistry
 from src.storage.repositories import ProjectThreadRepository
 
 logger = structlog.get_logger(__name__)
 
 MARKER_FILE = ".last_notified_commit"
+
+# Repo root — resolved once relative to this file's location
+_REPO_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def fire_commit_notifications(
+    bot: Bot,
+    chat_id: int,
+    registry: ProjectRegistry,
+    thread_repo: ProjectThreadRepository,
+) -> None:
+    """Launch commit-notification tasks for all notification-type projects.
+
+    Safe to call from any context (startup, /start, /sync_threads).
+    Spawns fire-and-forget asyncio tasks; never raises.
+    """
+    news_projects = registry.list_by_type(PROJECT_TYPE_NOTIFICATION)
+    if not news_projects:
+        return
+    for proj in news_projects:
+        asyncio.create_task(
+            check_and_notify_new_commits(
+                bot=bot,
+                repo_dir=_REPO_DIR,
+                chat_id=chat_id,
+                thread_repo=thread_repo,
+                news_slug=proj.slug,
+            )
+        )
 
 
 async def check_and_notify_new_commits(

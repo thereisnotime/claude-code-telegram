@@ -487,25 +487,15 @@ async def run_application(app: Dict[str, Any]) -> None:
             and config.project_threads_chat_id is not None
         ):
             from src.notifications.commit_notifier import (
-                check_and_notify_new_commits,
+                fire_commit_notifications,
             )
-            from src.projects.registry import PROJECT_TYPE_NOTIFICATION
 
-            news_projects = [
-                p
-                for p in (registry.list_by_type(PROJECT_TYPE_NOTIFICATION))
-                if p.enabled
-            ]
-            for news_proj in news_projects:
-                asyncio.create_task(
-                    check_and_notify_new_commits(
-                        bot=telegram_bot,
-                        repo_dir=Path(__file__).resolve().parent.parent,
-                        chat_id=config.project_threads_chat_id,
-                        thread_repo=storage.project_threads,
-                        news_slug=news_proj.slug,
-                    )
-                )
+            fire_commit_notifications(
+                bot=telegram_bot,
+                chat_id=config.project_threads_chat_id,
+                registry=registry,
+                thread_repo=storage.project_threads,
+            )
 
         # Start event bus
         await event_bus.start()

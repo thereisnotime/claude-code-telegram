@@ -649,6 +649,20 @@ class MessageOrchestrator:
                         context.bot,
                         chat_id=update.effective_chat.id,
                     )
+                    # Fire commit notifications after sync
+                    registry = context.bot_data.get("project_registry")
+                    storage = context.bot_data.get("storage")
+                    if registry and storage:
+                        from src.notifications.commit_notifier import (
+                            fire_commit_notifications,
+                        )
+
+                        fire_commit_notifications(
+                            bot=context.bot,
+                            chat_id=update.effective_chat.id,
+                            registry=registry,
+                            thread_repo=storage.project_threads,
+                        )
                     sync_line = (
                         "\n\n🧵 Topics synced"
                         f" (created {result.created}, reused {result.reused})."
@@ -1417,9 +1431,7 @@ class MessageOrchestrator:
                     response_content or ""
                 ) + "\n\n_(Interrupted by user)_"
             elif claude_response.hit_turn_limit:
-                response_content = (
-                    response_content or ""
-                ) + (
+                response_content = (response_content or "") + (
                     "\n\n⚠️ _Response cut short — turn limit reached "
                     f"({claude_response.num_turns} turns). "
                     "Send a follow-up message to continue._"

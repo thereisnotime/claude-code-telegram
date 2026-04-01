@@ -585,9 +585,9 @@ class MessageOrchestrator:
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("sync_threads", "Sync project topics"),
+                BotCommand("debug_show_config", "Show current bot config"),
             ]
-            if self.settings.enable_project_threads:
-                commands.append(BotCommand("sync_threads", "Sync project topics"))
             return commands
         else:
             commands = [
@@ -605,9 +605,9 @@ class MessageOrchestrator:
                 BotCommand("actions", "Show quick actions"),
                 BotCommand("git", "Git repository commands"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("sync_threads", "Sync project topics"),
+                BotCommand("debug_show_config", "Show current bot config"),
             ]
-            if self.settings.enable_project_threads:
-                commands.append(BotCommand("sync_threads", "Sync project topics"))
             return commands
 
     # --- Agentic handlers ---

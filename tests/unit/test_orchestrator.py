@@ -165,11 +165,11 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 7 bot commands."""
+    """Agentic mode returns 9 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 7
+    assert len(commands) == 9
     cmd_names = [c.command for c in commands]
     assert cmd_names == [
         "start",
@@ -179,20 +179,24 @@ async def test_agentic_bot_commands(agentic_settings, deps):
         "verbose",
         "repo",
         "restart",
+        "sync_threads",
+        "debug_show_config",
     ]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
-    """Classic mode returns 14 bot commands."""
+    """Classic mode returns 16 bot commands."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 14
+    assert len(commands) == 16
     cmd_names = [c.command for c in commands]
     assert "start" in cmd_names
     assert "help" in cmd_names
     assert "git" in cmd_names
     assert "restart" in cmd_names
+    assert "sync_threads" in cmd_names
+    assert "debug_show_config" in cmd_names
 
 
 async def test_restart_command_sends_sigterm(deps):

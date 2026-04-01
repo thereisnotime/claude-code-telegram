@@ -380,7 +380,9 @@ class Settings(BaseSettings):
         if not v:
             return v  # type: ignore[no-any-return]
         if isinstance(v, str):
-            v = Path(v)
+            v = Path(v).expanduser()
+        elif isinstance(v, Path):
+            v = v.expanduser()
         if not v.exists():
             raise ValueError(f"MCP config file does not exist: {v}")
         # Validate that the file contains valid JSON with mcpServers
@@ -416,7 +418,9 @@ class Settings(BaseSettings):
             value = v.strip()
             if not value:
                 return None
-            v = Path(value)
+            v = Path(value).expanduser()
+        elif isinstance(v, Path):
+            v = v.expanduser()
         if not v.exists():
             raise ValueError(f"Projects config file does not exist: {v}")
         if not v.is_file():

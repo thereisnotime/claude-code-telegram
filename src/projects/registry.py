@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import structlog
 import yaml  # type: ignore[import-untyped]
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,8 +56,11 @@ def load_project_registry(
         raise ValueError("Projects config must be a YAML object")
 
     raw_projects = data.get("projects")
-    if not isinstance(raw_projects, list) or not raw_projects:
-        raise ValueError("Projects config must contain a non-empty 'projects' list")
+    if not isinstance(raw_projects, list):
+        raise ValueError("Projects config must contain a 'projects' list")
+    if not raw_projects:
+        logger.warning("Projects config contains an empty 'projects' list")
+        return ProjectRegistry([])
 
     approved_root = approved_directory.resolve()
     seen_slugs = set()
@@ -92,10 +98,12 @@ def load_project_registry(
             ) from e
 
         if not absolute_path.exists() or not absolute_path.is_dir():
-            raise ValueError(
-                f"Project '{slug}' path does not exist or "
-                f"is not a directory: {absolute_path}"
+            logger.warning(
+                "Skipping project with missing directory",
+                slug=slug,
+                path=str(absolute_path),
             )
+            continue
 
         rel_path_norm = str(rel_path)
         if slug in seen_slugs:

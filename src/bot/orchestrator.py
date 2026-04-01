@@ -750,7 +750,8 @@ class MessageOrchestrator:
 
             log_output = subprocess.run(
                 [
-                    "git", "log",
+                    "git",
+                    "log",
                     "--format=%h  %ad  %an%n      %s",
                     "--date=format:%Y-%m-%d %H:%M",
                     "-5",
@@ -2001,16 +2002,16 @@ class MessageOrchestrator:
             logger.debug("Failed to delete progress message, ignoring")
 
         # Use MCP-collected images (from send_image_to_user tool calls).
-        images: List[ImageAttachment] = mcp_images_media
+        mcp_images: List[ImageAttachment] = mcp_images_media
 
         caption_sent = False
-        if images and len(formatted_messages) == 1:
+        if mcp_images and len(formatted_messages) == 1:
             msg = formatted_messages[0]
             if msg.text and len(msg.text) <= 1024:
                 try:
                     caption_sent = await self._send_images(
                         update,
-                        images,
+                        mcp_images,
                         reply_to_message_id=update.message.message_id,
                         caption=msg.text,
                         caption_parse_mode=msg.parse_mode,
@@ -2031,11 +2032,11 @@ class MessageOrchestrator:
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
 
-            if images:
+            if mcp_images:
                 try:
                     await self._send_images(
                         update,
-                        images,
+                        mcp_images,
                         reply_to_message_id=update.message.message_id,
                     )
                 except Exception as img_err:

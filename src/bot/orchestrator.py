@@ -749,7 +749,12 @@ class MessageOrchestrator:
             ).stdout.strip()
 
             log_output = subprocess.run(
-                ["git", "log", "--oneline", "--format=%h %an: %s", "-5"],
+                [
+                    "git", "log",
+                    "--format=%h  %ad  %an%n      %s",
+                    "--date=format:%Y-%m-%d %H:%M",
+                    "-5",
+                ],
                 capture_output=True,
                 text=True,
                 cwd=str(repo_dir),
@@ -761,9 +766,8 @@ class MessageOrchestrator:
                 f"🔖 <b>SHA:</b> <code>{sha}</code>",
                 "",
                 "<b>Last 5 commits:</b>",
+                f"<pre>{log_output}</pre>",
             ]
-            for commit_line in log_output.splitlines():
-                lines.append(f"<code>{commit_line}</code>")
 
             await update.message.reply_text(
                 "\n".join(lines), parse_mode="HTML"

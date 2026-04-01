@@ -390,6 +390,15 @@ class ProjectThreadRepository:
             rows = await cursor.fetchall()
             return [ProjectThreadModel.from_row(row) for row in rows]
 
+    async def get_distinct_chat_ids(self) -> List[int]:
+        """Return unique chat_ids that have active project thread mappings."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT DISTINCT chat_id FROM project_threads WHERE is_active = TRUE"
+            )
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+
 
 class MessageRepository:
     """Message data access."""

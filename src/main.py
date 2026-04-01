@@ -481,21 +481,31 @@ async def run_application(app: Dict[str, Any]) -> None:
         telegram_bot = bot.app.bot
 
         # Commit notification (fire-and-forget, after sync_topics created topics)
-        if (
-            config.enable_project_threads
-            and config.project_threads_mode == "group"
-            and config.project_threads_chat_id is not None
-        ):
+        if config.enable_project_threads:
             from src.notifications.commit_notifier import (
                 fire_commit_notifications,
             )
 
-            fire_commit_notifications(
-                bot=telegram_bot,
-                chat_id=config.project_threads_chat_id,
-                registry=registry,
-                thread_repo=storage.project_threads,
-            )
+            if (
+                config.project_threads_mode == "group"
+                and config.project_threads_chat_id is not None
+            ):
+                fire_commit_notifications(
+                    bot=telegram_bot,
+                    chat_id=config.project_threads_chat_id,
+                    registry=registry,
+                    thread_repo=storage.project_threads,
+                )
+            elif config.project_threads_mode == "private":
+                # In private mode, look up chat_ids from existing topic mappings
+                existing_chat_ids = await storage.project_threads.get_distinct_chat_ids()
+                for cid in existing_chat_ids:
+                    fire_commit_notifications(
+                        bot=telegram_bot,
+                        chat_id=cid,
+                        registry=registry,
+                        thread_repo=storage.project_threads,
+                    )
 
         # Start event bus
         await event_bus.start()

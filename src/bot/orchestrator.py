@@ -490,6 +490,7 @@ class MessageOrchestrator:
         handlers = [
             ("start", self.agentic_start),
             ("new", self.agentic_new),
+            ("resume", self.agentic_resume),
             ("status", self.agentic_status),
             ("status_all", self.agentic_status_all),
             ("verbose", self.agentic_verbose),
@@ -633,6 +634,7 @@ class MessageOrchestrator:
             commands = [
                 BotCommand("start", "Start the bot"),
                 BotCommand("new", "Start a fresh session"),
+                BotCommand("resume", "Resume a previous session"),
                 BotCommand("status", "Show session status"),
                 BotCommand("status_all", "Show all sessions (DB + FS)"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
@@ -758,11 +760,120 @@ class MessageOrchestrator:
         """Reset session, one-line confirmation."""
         assert update.message is not None
         assert context.user_data is not None
-        context.user_data["claude_session_id"] = None
+        thread_ctx = context.user_data.get("_thread_context")
+        if thread_ctx:
+            thread_ctx["claude_session_id"] = None
+            thread_ctx["force_new_session"] = True
+        else:
+            context.user_data["claude_session_id"] = None
+            context.user_data["force_new_session"] = True
         context.user_data["session_started"] = True
-        context.user_data["force_new_session"] = True
 
         await update.message.reply_text("Session reset. What's next?")
+
+    async def agentic_resume(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Resume a previous session by ID prefix, or the most recent one."""
+        assert update.message is not None
+        assert update.effective_user is not None
+        assert context.user_data is not None
+
+        thread_ctx = context.user_data.get("_thread_context")
+        if thread_ctx:
+            current_dir = thread_ctx.get(
+                "current_directory", self.settings.approved_directory
+            )
+        else:
+            current_dir = context.user_data.get(
+                "current_directory", self.settings.approved_directory
+            )
+
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await update.message.reply_text("Claude integration not available.")
+            return
+
+        sessions = await claude_integration.find_sessions_for_resume(
+            update.effective_user.id, Path(str(current_dir))
+        )
+
+        # Parse argument: /resume, /resume list, /resume <prefix>
+        arg = ""
+        if update.message.text:
+            parts = update.message.text.split(maxsplit=1)
+            if len(parts) > 1:
+                arg = parts[1].strip()
+
+        # /resume list — show available sessions
+        if arg.lower() == "list":
+            if not sessions:
+                await update.message.reply_text(
+                    "No resumable sessions in this directory."
+                )
+                return
+            lines = ["<b>Resumable sessions:</b>\n"]
+            for s in sessions[:10]:
+                age_seconds = time.time() - s.last_used.timestamp()
+                if age_seconds < 3600:
+                    age_str = f"{int(age_seconds / 60)}m ago"
+                elif age_seconds < 86400:
+                    age_str = f"{int(age_seconds / 3600)}h ago"
+                else:
+                    age_str = f"{int(age_seconds / 86400)}d ago"
+                sid = s.session_id[:8]
+                lines.append(
+                    f"• <code>{sid}</code> — {s.message_count} msgs, "
+                    f"${s.total_cost:.2f}, {age_str}"
+                )
+            lines.append(f"\nUse <code>/resume &lt;id&gt;</code> to resume.")
+            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+            return
+
+        # /resume <prefix> — match by prefix
+        if arg:
+            prefix = arg.lower()
+            matches = [s for s in sessions if s.session_id.lower().startswith(prefix)]
+            if not matches:
+                await update.message.reply_text(
+                    f"No session matching <code>{escape_html(prefix)}</code>.\n"
+                    "Use <code>/resume list</code> to see available sessions.",
+                    parse_mode="HTML",
+                )
+                return
+            if len(matches) > 1:
+                abbrevs = ", ".join(f"<code>{s.session_id[:8]}</code>" for s in matches)
+                await update.message.reply_text(
+                    f"Ambiguous prefix — matches {len(matches)} sessions: {abbrevs}\n"
+                    "Provide more characters.",
+                    parse_mode="HTML",
+                )
+                return
+            target = matches[0]
+        else:
+            # /resume (no args) — most recent
+            if not sessions:
+                await update.message.reply_text(
+                    "No sessions to resume. Send a message to start one."
+                )
+                return
+            target = sessions[0]
+
+        # Set session and clear force_new
+        if thread_ctx:
+            thread_ctx["claude_session_id"] = target.session_id
+            thread_ctx["force_new_session"] = False
+        else:
+            context.user_data["claude_session_id"] = target.session_id
+            context.user_data["force_new_session"] = False
+
+        sid = target.session_id[:8]
+        await update.message.reply_text(
+            f"Resumed session <code>{sid}</code> "
+            f"({target.message_count} msgs, ${target.total_cost:.2f}). "
+            "Send a message to continue.",
+            parse_mode="HTML",
+        )
 
     async def agentic_version(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1448,7 +1559,10 @@ class MessageOrchestrator:
 
         # Check if /new was used — skip auto-resume for this first message.
         # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
+        if thread_ctx:
+            force_new = bool(thread_ctx.get("force_new_session"))
+        else:
+            force_new = bool(context.user_data.get("force_new_session"))
 
         # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
@@ -1507,7 +1621,10 @@ class MessageOrchestrator:
 
             # New session created successfully — clear the one-shot flag
             if force_new:
-                context.user_data["force_new_session"] = False
+                if thread_ctx:
+                    thread_ctx["force_new_session"] = False
+                else:
+                    context.user_data["force_new_session"] = False
 
             # Write results back to the thread-safe _thread_context when
             # in project-thread mode so concurrent handlers don't clash.
@@ -1763,7 +1880,10 @@ class MessageOrchestrator:
 
         # Check if /new was used — skip auto-resume for this first message.
         # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
+        if thread_ctx:
+            force_new = bool(thread_ctx.get("force_new_session"))
+        else:
+            force_new = bool(context.user_data.get("force_new_session"))
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
@@ -1789,7 +1909,10 @@ class MessageOrchestrator:
             )
 
             if force_new:
-                context.user_data["force_new_session"] = False
+                if thread_ctx:
+                    thread_ctx["force_new_session"] = False
+                else:
+                    context.user_data["force_new_session"] = False
 
             # Thread-safe context writes
             if thread_ctx:
@@ -1994,7 +2117,10 @@ class MessageOrchestrator:
                 "current_directory", self.settings.approved_directory
             )
             session_id = context.user_data.get("claude_session_id")
-        force_new = bool(context.user_data.get("force_new_session"))
+        if thread_ctx:
+            force_new = bool(thread_ctx.get("force_new_session"))
+        else:
+            force_new = bool(context.user_data.get("force_new_session"))
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
@@ -2023,7 +2149,10 @@ class MessageOrchestrator:
             heartbeat.cancel()
 
         if force_new:
-            context.user_data["force_new_session"] = False
+            if thread_ctx:
+                thread_ctx["force_new_session"] = False
+            else:
+                context.user_data["force_new_session"] = False
 
         # Thread-safe context writes
         if thread_ctx:

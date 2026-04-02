@@ -262,6 +262,30 @@ class ClaudeIntegration:
 
         return max(matching_sessions, key=lambda s: s.last_used)
 
+    async def find_sessions_for_resume(
+        self,
+        user_id: int,
+        working_directory: Path,
+    ) -> List[ClaudeSession]:
+        """Return all resumable sessions for a user in a directory.
+
+        Sorted by most recently used first. Each session has a real
+        (non-temporary) session ID and is not expired.
+        """
+        assert self.session_manager is not None, "session_manager is required"
+        sessions = await self.session_manager._get_user_sessions(user_id)
+
+        matching = [
+            s
+            for s in sessions
+            if s.project_path == working_directory
+            and bool(s.session_id)
+            and not s.is_expired(self.config.session_timeout_hours)
+        ]
+
+        matching.sort(key=lambda s: s.last_used, reverse=True)
+        return matching
+
     async def continue_session(
         self,
         user_id: int,

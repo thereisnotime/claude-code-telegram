@@ -657,6 +657,21 @@ class MessageOrchestrator:
             manager = context.bot_data.get("project_threads_manager")
             if manager:
                 try:
+                    # Pre-resolve existing topics via Telethon (if enabled)
+                    if self.settings.enable_topic_resolution:
+                        from src.projects.topic_resolver import (
+                            resolve_topics_if_enabled,
+                        )
+
+                        resolved = await resolve_topics_if_enabled(
+                            enable_topic_resolution=True,
+                            api_id=self.settings.telegram_api_id,
+                            api_hash=self.settings.telegram_api_hash,
+                            bot_token=self.settings.telegram_token_str,
+                            chat_id=update.effective_chat.id,
+                        )
+                        manager.set_resolved_topics(resolved)
+
                     result = await manager.sync_topics(
                         context.bot,
                         chat_id=update.effective_chat.id,

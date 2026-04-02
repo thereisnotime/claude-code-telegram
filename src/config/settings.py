@@ -343,6 +343,21 @@ class Settings(BaseSettings):
         ),
         ge=0.0,
     )
+    enable_topic_resolution: bool = Field(
+        False,
+        description=(
+            "Use Telethon (MTProto) on startup to resolve existing Telegram "
+            "forum topics by name, preventing duplicates on fresh databases"
+        ),
+    )
+    telegram_api_id: Optional[int] = Field(
+        None,
+        description="Telegram API ID from my.telegram.org (required for topic resolution)",
+    )
+    telegram_api_hash: Optional[str] = Field(
+        None,
+        description="Telegram API hash from my.telegram.org (required for topic resolution)",
+    )
 
     # Concurrency: parallel SDK instances per project thread
     ram_threshold_pct: float = Field(
@@ -532,6 +547,15 @@ class Settings(BaseSettings):
             if not self.projects_config_path:
                 raise ValueError(
                     "projects_config_path required when enable_project_threads is True"
+                )
+
+        # Topic resolution requires Telegram API credentials
+        if self.enable_topic_resolution:
+            if not self.telegram_api_id or not self.telegram_api_hash:
+                raise ValueError(
+                    "telegram_api_id and telegram_api_hash are required "
+                    "when enable_topic_resolution is True "
+                    "(get them from https://my.telegram.org)"
                 )
 
         # Sanity: max_concurrent_sdk should be >= 2 when threads are parallel

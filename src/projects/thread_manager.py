@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from time import monotonic
-from typing import Awaitable, Callable, Optional, TypeVar
+from typing import Awaitable, Callable, Dict, Optional, TypeVar
 
 import structlog
 from telegram import Bot
@@ -51,6 +51,18 @@ class ProjectThreadManager:
         self.sync_action_interval_seconds = max(0.0, sync_action_interval_seconds)
         self._sync_api_lock = asyncio.Lock()
         self._last_sync_api_call_at: Optional[float] = None
+        # Pre-resolved topic name → thread_id from Telethon (set before sync)
+        self._resolved_topics: Dict[str, int] = {}
+
+    def set_resolved_topics(self, topics: Dict[str, int]) -> None:
+        """Inject pre-resolved topic name → thread_id mapping.
+
+        Call this *before* :meth:`sync_topics` with the output of
+        :func:`topic_resolver.resolve_topics_if_enabled` so that the
+        sync can reuse existing Telegram topics instead of creating
+        duplicates.
+        """
+        self._resolved_topics = dict(topics)
 
     async def sync_topics(self, bot: Bot, chat_id: int) -> TopicSyncResult:
         """Create/reconcile topics for all enabled projects."""
@@ -232,7 +244,28 @@ class ProjectThreadManager:
         chat_id: int,
         result: TopicSyncResult,
     ) -> None:
-        """Create a topic and persist mapping."""
+        """Create a topic (or adopt a pre-resolved one) and persist mapping."""
+        resolved_thread_id = self._resolved_topics.get(project.name)
+
+        if resolved_thread_id is not None:
+            # Adopt the existing Telegram topic instead of creating a new one
+            logger.info(
+                "Adopting pre-resolved topic",
+                project_slug=project.slug,
+                topic_name=project.name,
+                message_thread_id=resolved_thread_id,
+                chat_id=chat_id,
+            )
+            await self.repository.upsert_mapping(
+                project_slug=project.slug,
+                chat_id=chat_id,
+                message_thread_id=resolved_thread_id,
+                topic_name=project.name,
+                is_active=True,
+            )
+            result.reused += 1
+            return
+
         topic = await self._call_sync_api(
             lambda: bot.create_forum_topic(
                 chat_id=chat_id,

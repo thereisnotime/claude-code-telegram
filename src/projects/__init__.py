@@ -5,6 +5,7 @@ from .thread_manager import (
     PrivateTopicsUnavailableError,
     ProjectThreadManager,
 )
+from .topic_resolver import resolve_topics_if_enabled
 
 __all__ = [
     "ProjectDefinition",
@@ -12,4 +13,5 @@ __all__ = [
     "load_project_registry",
     "ProjectThreadManager",
     "PrivateTopicsUnavailableError",
+    "resolve_topics_if_enabled",
 ]

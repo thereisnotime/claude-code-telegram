@@ -455,6 +455,26 @@ async def run_application(app: Dict[str, Any]) -> None:
             bot.deps["project_registry"] = registry
             bot.deps["project_threads_manager"] = project_threads_manager
 
+            # Pre-resolve existing Telegram topics via Telethon (if enabled)
+            if config.enable_topic_resolution:
+                from src.projects.topic_resolver import resolve_topics_if_enabled
+
+                assert bot.app is not None
+                _resolve_chat_id = (
+                    config.project_threads_chat_id
+                    if config.project_threads_mode == "group"
+                    else None
+                )
+                if _resolve_chat_id is not None:
+                    resolved = await resolve_topics_if_enabled(
+                        enable_topic_resolution=True,
+                        api_id=config.telegram_api_id,
+                        api_hash=config.telegram_api_hash,
+                        bot_token=config.telegram_token_str,
+                        chat_id=_resolve_chat_id,
+                    )
+                    project_threads_manager.set_resolved_topics(resolved)
+
             if config.project_threads_mode == "group":
                 if config.project_threads_chat_id is None:
                     raise ConfigurationError(

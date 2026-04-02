@@ -289,6 +289,19 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         manager.registry = registry
         context.bot_data["project_registry"] = registry
 
+        # Pre-resolve existing topics via Telethon (if enabled)
+        if settings.enable_topic_resolution:
+            from src.projects.topic_resolver import resolve_topics_if_enabled
+
+            resolved = await resolve_topics_if_enabled(
+                enable_topic_resolution=True,
+                api_id=settings.telegram_api_id,
+                api_hash=settings.telegram_api_hash,
+                bot_token=settings.telegram_token_str,
+                chat_id=target_chat_id,
+            )
+            manager.set_resolved_topics(resolved)
+
         result = await manager.sync_topics(context.bot, chat_id=target_chat_id)
 
         # Fire commit notifications after sync creates/verifies topics

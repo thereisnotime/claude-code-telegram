@@ -184,6 +184,27 @@ PROJECT_THREADS_CHAT_ID=-1001234567890
 PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS=1.1
 ```
 
+#### Topic Resolution (Anti-Duplicate)
+
+```bash
+# Use Telethon (MTProto) to discover existing Telegram forum topics by name
+# on startup, preventing duplicate topics when the bot starts with a fresh
+# database (e.g. after container rebuild). Disabled by default.
+ENABLE_TOPIC_RESOLUTION=false
+
+# Telegram API credentials from https://my.telegram.org
+# Required when ENABLE_TOPIC_RESOLUTION=true
+TELEGRAM_API_ID=12345678
+TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef
+```
+
+When enabled, the bot temporarily connects via Telethon (MTProto) before
+each topic sync to list all existing forum topics. If a topic with the
+same name already exists, the bot adopts it instead of creating a duplicate.
+When multiple topics share the same name, the newest (highest ID) is used.
+
+Install the optional dependency: `poetry install -E telethon`
+
 `PROJECTS_CONFIG_PATH` schema:
 
 ```yaml

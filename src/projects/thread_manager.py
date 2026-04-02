@@ -188,6 +188,30 @@ class ProjectThreadManager:
         """Sync an existing mapping. Returns True if handled without recreate."""
         chat_id = mapping.chat_id
 
+        # If Telethon resolved a different thread_id for this project,
+        # adopt the resolved one — the DB mapping is stale.
+        resolved_thread_id = self._resolved_topics.get(project.name)
+        if (
+            resolved_thread_id is not None
+            and resolved_thread_id != mapping.message_thread_id
+        ):
+            logger.info(
+                "Updating stale thread ID from Telethon resolution",
+                project_slug=project.slug,
+                old_thread_id=mapping.message_thread_id,
+                new_thread_id=resolved_thread_id,
+                chat_id=chat_id,
+            )
+            await self.repository.upsert_mapping(
+                project_slug=project.slug,
+                chat_id=chat_id,
+                message_thread_id=resolved_thread_id,
+                topic_name=project.name,
+                is_active=True,
+            )
+            result.reused += 1
+            return True
+
         if not mapping.is_active:
             reopen_status = await self._reopen_topic_if_possible(bot, mapping)
             if reopen_status == "unusable":

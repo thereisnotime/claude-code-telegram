@@ -283,6 +283,11 @@ class MessageOrchestrator:
 
         message_thread_id = self._extract_message_thread_id(update)
         if not message_thread_id:
+            logger.warning(
+                "Thread routing rejected: no thread ID",
+                chat_id=chat.id,
+                chat_type=getattr(chat, "type", None),
+            )
             await self._reject_for_thread_mode(
                 update,
                 manager.guidance_message(mode=self.settings.project_threads_mode),
@@ -291,6 +296,11 @@ class MessageOrchestrator:
 
         project = await manager.resolve_project(chat.id, message_thread_id)
         if not project:
+            logger.warning(
+                "Thread routing rejected: no project for thread",
+                chat_id=chat.id,
+                message_thread_id=message_thread_id,
+            )
             await self._reject_for_thread_mode(
                 update,
                 manager.guidance_message(mode=self.settings.project_threads_mode),
@@ -419,16 +429,34 @@ class MessageOrchestrator:
             return None
         message_thread_id = getattr(message, "message_thread_id", None)
         if isinstance(message_thread_id, int) and message_thread_id > 0:
+            logger.debug(
+                "Extracted thread ID from message_thread_id",
+                message_thread_id=message_thread_id,
+            )
             return message_thread_id
         dm_topic = getattr(message, "direct_messages_topic", None)
         topic_id = getattr(dm_topic, "topic_id", None) if dm_topic else None
         if isinstance(topic_id, int) and topic_id > 0:
+            logger.debug(
+                "Extracted thread ID from direct_messages_topic",
+                topic_id=topic_id,
+            )
             return topic_id
         # Telegram omits message_thread_id for the General topic in forum
         # supergroups; its canonical thread ID is 1.
         chat = update.effective_chat
         if chat and getattr(chat, "is_forum", False):
             return 1
+        logger.debug(
+            "No thread ID found in update",
+            has_message_thread_id=message_thread_id is not None,
+            message_thread_id_value=message_thread_id,
+            has_dm_topic=dm_topic is not None,
+            dm_topic_id=topic_id,
+            chat_type=getattr(update.effective_chat, "type", None),
+            chat_id=getattr(update.effective_chat, "id", None),
+            is_forum=getattr(update.effective_chat, "is_forum", None),
+        )
         return None
 
     async def _reject_for_thread_mode(self, update: Update, message: str) -> None:
@@ -488,13 +516,20 @@ class MessageOrchestrator:
         )
 
         # Unknown slash commands -> Claude (passthrough in agentic mode).
-        # Registered commands are handled by CommandHandlers in group 0
-        # (higher priority). This catches any /command not matched there
-        # and forwards it to Claude, while skipping known commands to
-        # avoid double-firing.
+        # Registered commands are handled by CommandHandlers in group 0;
+        # exclude them at the filter level so the _inject_deps wrapper
+        # (and its thread enforcement) never fires for known commands in
+        # this group — preventing spurious "Project Thread Required"
+        # rejections.
+        _known_cmd_pattern = re.compile(
+            r"^/("
+            + "|".join(re.escape(c) for c in self._known_commands)
+            + r")(@\S+)?(\s|$)",
+            re.IGNORECASE,
+        )
         app.add_handler(
             MessageHandler(
-                filters.COMMAND,
+                filters.COMMAND & ~filters.Regex(_known_cmd_pattern),
                 self._inject_deps(self._handle_unknown_command),
             ),
             group=10,

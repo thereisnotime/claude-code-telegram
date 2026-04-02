@@ -350,10 +350,21 @@ class ProjectThreadManager:
         """Resolve mapped project for chat+thread."""
         mapping = await self.repository.get_by_chat_thread(chat_id, message_thread_id)
         if not mapping:
+            logger.debug(
+                "No DB mapping for chat+thread",
+                chat_id=chat_id,
+                message_thread_id=message_thread_id,
+            )
             return None
 
         project = self.registry.get_by_slug(mapping.project_slug)
         if not project or not project.enabled:
+            logger.debug(
+                "Project not found or disabled",
+                project_slug=mapping.project_slug,
+                found=project is not None,
+                enabled=getattr(project, "enabled", None),
+            )
             return None
 
         return project

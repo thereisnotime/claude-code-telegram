@@ -513,6 +513,34 @@ class Settings(BaseSettings):
             return v
         return v  # type: ignore[no-any-return]
 
+    @field_validator("telegram_api_id", mode="before")
+    @classmethod
+    def validate_telegram_api_id(cls, v: Any) -> Optional[int]:
+        """Allow empty env var to mean None (avoids int parse error)."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value:
+                return None
+            return int(value)
+        if isinstance(v, int):
+            return v
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("telegram_api_hash", mode="before")
+    @classmethod
+    def validate_telegram_api_hash(cls, v: Any) -> Optional[str]:
+        """Allow empty env var to mean None."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value:
+                return None
+            return value
+        return v  # type: ignore[no-any-return]
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: Any) -> str:

@@ -1,0 +1,20 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.11+, Poetry, python-telegram-bot (async), claude-agent-sdk, FastAPI, SQLite (aiosqlite), structlog
+  Architecture: Telegram bot providing remote Claude Code access. Agentic mode (default) routes messages directly to Claude SDK. Classic mode uses full command/message handler set.
+  Key patterns: Pydantic Settings v2 for config, dependency injection via context.bot_data, repository pattern for storage, async pub/sub event bus, per-thread session state for project topics mode.
+  Code style: Black (88 chars), isort (black profile), flake8, mypy strict, pytest-asyncio (auto mode), type hints required on all functions.
+  Commit style: Natural human tone, concise, no Co-Authored-By trailers.
+  Domain: Developer tooling — remote coding assistant via Telegram with multi-project support, webhook integrations, and scheduled tasks.
+
+rules:
+  proposal:
+    - Keep proposals concise and focused on the "why"
+    - Include security implications if touching auth, validation, or input handling
+  design:
+    - Reference existing patterns in the codebase rather than inventing new ones
+    - Note thread-safety considerations for project-threads mode
+  tasks:
+    - Each task should be independently testable
+    - Include linting/type-checking as a verification step

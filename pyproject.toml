@@ -55,11 +55,10 @@ PyYAML = "^6.0.2"
 psutil = "^6.0.0"
 mistralai = {version = "^1.0.0", optional = true}
 openai = {version = "^1.0.0", optional = true}
-telethon = {version = "^1.37.0", optional = true}
+telethon = "^1.37.0"
 
 [tool.poetry.extras]
 voice = ["mistralai", "openai"]
-telethon = ["telethon"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.0"
